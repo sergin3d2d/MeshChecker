@@ -1,0 +1,23 @@
+# Build directories
+build/
+build_windows/
+buildwin/
+
+# Virtual environments
+myenv/
+venv/
+
+# Log files
+*.log
+
+# User-specific files
+*.user
+
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

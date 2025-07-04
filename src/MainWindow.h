@@ -1,0 +1,96 @@
+#ifndef MAINWINDOW_H
+#define MAINWINDOW_H
+
+#include <QMainWindow>
+#include <QFutureWatcher>
+#include "Mesh.h"
+#include "MeshChecker.h"
+
+class QTabWidget;
+class ViewerWidget;
+class QLabel;
+class QTableWidget;
+class QListWidget;
+class QProgressDialog;
+class QCheckBox;
+class QGroupBox;
+
+class MainWindow : public QMainWindow
+{
+    Q_OBJECT
+
+public:
+    MainWindow(QWidget *parent = nullptr);
+    ~MainWindow();
+
+private slots:
+    void onLoadMesh();
+    void onCheckMesh();
+    void onCheckFinished();
+    void onSelectFolder();
+    void onExportCsv();
+    void onLoadMannequin();
+    void onLoadApparel();
+    void updateCameraStatus(const QString& status);
+    void onVisualizationToggled();
+    void onCheckDegenerate();
+
+private:
+    void setupUI();
+
+    QTabWidget *tabWidget;
+    ViewerWidget *viewerWidget;
+    Mesh currentMesh;
+    Mesh mannequinMesh;
+    std::vector<Mesh> apparelMeshes;
+    QString currentMeshPath;
+    MeshChecker::CheckResult lastCheckResult;
+
+    // Single Check
+    QLabel* watertightResultLabel;
+    QLabel* nonManifoldResultLabel;
+    QLabel* selfIntersectionResultLabel;
+    QLabel* holesResultLabel;
+    QLabel* degenerateFacesResultLabel;
+    QLabel* hasUvsResultLabel;
+    QLabel* overlappingUvsResultLabel;
+    QLabel* uvsOutOfBoundsResultLabel;
+
+    // Visualization Toggles
+    QCheckBox* showIntersectionsCheck;
+    QCheckBox* showNonManifoldCheck;
+    QCheckBox* showHolesCheck;
+    QCheckBox* showOverlappingUvsCheck;
+
+    // Check selection
+    QCheckBox* checkWatertightCheck;
+    QCheckBox* checkNonManifoldCheck;
+    QCheckBox* checkSelfIntersectCheck;
+    QCheckBox* checkHolesCheck;
+    QCheckBox* checkDegenerateFacesCheck;
+    QCheckBox* checkUVOverlapCheck;
+    QCheckBox* checkUVBoundsCheck;
+
+    // Batch Check
+    QTableWidget* batchResultsTable;
+    QCheckBox* batchCheckWatertightCheck;
+    QCheckBox* batchCheckNonManifoldCheck;
+    QCheckBox* batchCheckSelfIntersectCheck;
+    QCheckBox* batchCheckHolesCheck;
+    QCheckBox* batchCheckDegenerateFacesCheck;
+    QCheckBox* batchCheckUVOverlapCheck;
+    QCheckBox* batchCheckUVBoundsCheck;
+
+    // Intersection Check
+    QListWidget* intersectionResultsList;
+
+    // Status Bar
+    QLabel* fileNameLabel;
+    QLabel* cameraStatusLabel;
+
+    // Async
+    QFutureWatcher<MeshChecker::CheckResult> checkWatcher;
+    QProgressDialog* progressDialog;
+};
+
+#endif // MAINWINDOW_H
