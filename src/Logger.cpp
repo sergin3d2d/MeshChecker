@@ -1,6 +1,11 @@
 #include "Logger.h"
+#include <QString>
 
-std::ofstream Logger::logfile;
+Logger& Logger::getInstance()
+{
+    static Logger instance;
+    return instance;
+}
 
 void Logger::init(const std::string& filename)
 {
@@ -12,4 +17,5 @@ void Logger::log(const std::string& message)
     if (logfile.is_open()) {
         logfile << message << std::endl;
     }
+    emit messageLogged(QString::fromStdString(message));
 }

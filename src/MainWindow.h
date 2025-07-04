@@ -14,6 +14,7 @@ class QListWidget;
 class QProgressDialog;
 class QCheckBox;
 class QGroupBox;
+class QTextEdit;
 
 class MainWindow : public QMainWindow
 {
@@ -34,12 +35,14 @@ private slots:
     void updateCameraStatus(const QString& status);
     void onVisualizationToggled();
     void onCheckDegenerate();
+    void onLogMessage(const QString& message);
 
 private:
     void setupUI();
 
     QTabWidget *tabWidget;
     ViewerWidget *viewerWidget;
+    QTextEdit* console;
     Mesh currentMesh;
     Mesh mannequinMesh;
     std::vector<Mesh> apparelMeshes;

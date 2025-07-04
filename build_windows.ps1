@@ -27,6 +27,13 @@ $BuildConfig = "Release"
 $BuildDir = "C:\MeshChecker-build"
 $SourceDir = $PSScriptRoot
 
+# If running from WSL, convert the path to a Windows-style path
+if ($SourceDir -like "\\wsl$*") {
+    Write-Host "WSL path detected. Converting to Windows path..."
+    $SourceDir = (wslpath -w $SourceDir).Trim()
+    Write-Host "Converted source directory: $SourceDir"
+}
+
 Write-Host "--------------------------------------------------"
 Write-Host "Starting Windows build for $ProjectName"
 Write-Host "Source directory: $SourceDir"

@@ -1,8 +1,8 @@
 #include "MainWindow.h"
-#include <QProcess>
-#include "ViewerWidget.h" 
+#include "ViewerWidget.h"
 #include "ObjLoader.h"
 #include "MeshChecker.h"
+#include "Logger.h"
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -21,17 +21,24 @@
 #include <QProgressDialog>
 #include <QCheckBox>
 #include <QSplitter>
-#include <QOpenGLWidget>
+#include <QTextEdit>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     setupUI();
     connect(&checkWatcher, &QFutureWatcher<MeshChecker::CheckResult>::finished, this, &MainWindow::onCheckFinished);
+    connect(&Logger::getInstance(), &Logger::messageLogged, this, &MainWindow::onLogMessage);
+    Logger::getInstance().init("mesh_checker.log");
 }
 
 MainWindow::~MainWindow()
 {
+}
+
+void MainWindow::onLogMessage(const QString& message)
+{
+    console->append(message);
 }
 
 void MainWindow::setupUI()
@@ -39,18 +46,28 @@ void MainWindow::setupUI()
     setWindowTitle("Apparel Mesh Checker");
     resize(1280, 720);
 
-    QSplitter *splitter = new QSplitter(Qt::Horizontal, this);
-    setCentralWidget(splitter);
+    QSplitter *mainSplitter = new QSplitter(Qt::Horizontal, this);
+    setCentralWidget(mainSplitter);
 
     // Left panel for controls
+    QSplitter *leftSplitter = new QSplitter(Qt::Vertical);
     QWidget *leftPanel = new QWidget;
     QVBoxLayout *leftLayout = new QVBoxLayout(leftPanel);
     leftPanel->setLayout(leftLayout);
-    leftPanel->setMinimumWidth(300);
+    leftPanel->setMinimumWidth(600);
     leftPanel->setMaximumWidth(800);
 
     tabWidget = new QTabWidget;
     leftLayout->addWidget(tabWidget);
+
+    // Console
+    console = new QTextEdit;
+    console->setReadOnly(true);
+    
+    leftSplitter->addWidget(leftPanel);
+    leftSplitter->addWidget(console);
+    leftSplitter->setSizes({400, 100});
+
 
     // Single Check Tab
     QWidget *singleCheckTab = new QWidget;
@@ -87,10 +104,6 @@ void MainWindow::setupUI()
 
     QPushButton *checkButton = new QPushButton("Check Mesh");
     singleCheckLayout->addWidget(checkButton);
-
-    QPushButton *checkDegenerateButton = new QPushButton("Check Degenerate");
-    singleCheckLayout->addWidget(checkDegenerateButton);
-    connect(checkDegenerateButton, &QPushButton::clicked, this, &MainWindow::onCheckDegenerate);
 
     watertightResultLabel = new QLabel("Watertight: -");
     singleCheckLayout->addWidget(watertightResultLabel);
@@ -213,9 +226,9 @@ void MainWindow::setupUI()
     viewerWidget = new ViewerWidget;
 
     // Add panels to splitter
-    splitter->addWidget(leftPanel);
-    splitter->addWidget(viewerWidget);
-    splitter->setStretchFactor(1, 1); // Viewer takes remaining space
+    mainSplitter->addWidget(leftSplitter);
+    mainSplitter->addWidget(viewerWidget);
+    mainSplitter->setStretchFactor(1, 1); // Viewer takes remaining space
 
     // Status Bar
     fileNameLabel = new QLabel("No file loaded");
@@ -232,6 +245,8 @@ void MainWindow::onLoadMesh()
     if (filePath.isEmpty()) {
         return;
     }
+
+    Logger::getInstance().log("Loading mesh: " + filePath.toStdString());
 
     // --- Definitive State Cleanup ---
     // 1. Clear all data from the viewer's GPU buffers
@@ -251,8 +266,10 @@ void MainWindow::onLoadMesh()
         // 5. Send the clean mesh to the viewer
         viewerWidget->setMesh(&currentMesh, &lastCheckResult);
         viewerWidget->focusOnMesh();
+        Logger::getInstance().log("Mesh loaded successfully.");
     } else {
         QMessageBox::critical(this, "Error", "Failed to load mesh.");
+        Logger::getInstance().log("Failed to load mesh.");
     }
 }
 
@@ -262,6 +279,8 @@ void MainWindow::onCheckMesh()
         QMessageBox::warning(this, "Warning", "No mesh loaded.");
         return;
     }
+
+    Logger::getInstance().log("Starting mesh check...");
 
     std::set<MeshChecker::CheckType> checksToPerform;
     if (checkWatertightCheck->isChecked()) checksToPerform.insert(MeshChecker::CheckType::Watertight);
@@ -285,6 +304,8 @@ void MainWindow::onCheckFinished()
     progressDialog->hide();
     lastCheckResult = checkWatcher.result();
 
+    Logger::getInstance().log("Mesh check finished.");
+
     watertightResultLabel->setText(QString("Watertight: %1").arg(lastCheckResult.is_watertight ? "Yes" : "No"));
     nonManifoldResultLabel->setText(QString("Non-manifold vertices: %1").arg(lastCheckResult.non_manifold_vertices_count));
     selfIntersectionResultLabel->setText(QString("Self-intersections: %1").arg(lastCheckResult.self_intersections_count));
@@ -305,10 +326,15 @@ void MainWindow::onSelectFolder()
         return;
     }
 
+    Logger::getInstance().log("Starting batch check on folder: " + dirPath.toStdString());
+
     batchResultsTable->setRowCount(0);
     QDirIterator it(dirPath, {"*.obj"}, QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) {
         QString filePath = it.next();
+        Logger::getInstance().log("Checking file: " + filePath.toStdString());
+        QCoreApplication::processEvents(); 
+
         Mesh mesh;
         if (ObjLoader::load(filePath.toStdString(), mesh)) {
             std::set<MeshChecker::CheckType> checksToPerform;
@@ -332,12 +358,15 @@ void MainWindow::onSelectFolder()
             batchResultsTable->setItem(row, 6, new QTableWidgetItem(result.has_uvs ? "Yes" : "No"));
             batchResultsTable->setItem(row, 7, new QTableWidgetItem(QString::number(result.overlapping_uv_islands_count)));
             batchResultsTable->setItem(row, 8, new QTableWidgetItem(QString::number(result.uvs_out_of_bounds_count)));
+        } else {
+            Logger::getInstance().log("Failed to load file: " + filePath.toStdString());
         }
     }
     batchResultsTable->resizeColumnsToContents();
     for (int i = 0; i < batchResultsTable->columnCount(); ++i) {
         batchResultsTable->setColumnWidth(i, batchResultsTable->columnWidth(i) + 20);
     }
+    Logger::getInstance().log("Batch check finished.");
 }
 
 void MainWindow::onExportCsv()
@@ -364,6 +393,9 @@ void MainWindow::onExportCsv()
             stream << "\n";
         }
         file.close();
+        Logger::getInstance().log("Batch results exported to: " + filePath.toStdString());
+    } else {
+        Logger::getInstance().log("Failed to export batch results to: " + filePath.toStdString());
     }
 }
 
@@ -371,8 +403,12 @@ void MainWindow::onLoadMannequin()
 {
     QString filePath = QFileDialog::getOpenFileName(this, "Load Mannequin", "", "OBJ Files (*.obj)");
     if (!filePath.isEmpty()) {
+        Logger::getInstance().log("Loading mannequin: " + filePath.toStdString());
         if (!ObjLoader::load(filePath.toStdString(), mannequinMesh)) {
             QMessageBox::critical(this, "Error", "Failed to load mannequin mesh.");
+            Logger::getInstance().log("Failed to load mannequin.");
+        } else {
+            Logger::getInstance().log("Mannequin loaded successfully.");
         }
     }
 }
@@ -384,24 +420,33 @@ void MainWindow::onLoadApparel()
         return;
     }
 
+    Logger::getInstance().log("Loading apparel...");
     apparelMeshes.clear();
     for (const QString& filePath : filePaths) {
         Mesh mesh;
         if (ObjLoader::load(filePath.toStdString(), mesh)) {
             apparelMeshes.push_back(mesh);
+            Logger::getInstance().log("Loaded apparel item: " + filePath.toStdString());
+        } else {
+            Logger::getInstance().log("Failed to load apparel item: " + filePath.toStdString());
         }
     }
 
     if (mannequinMesh.vertices.empty()) {
         QMessageBox::warning(this, "Warning", "No mannequin loaded.");
+        Logger::getInstance().log("Intersection check skipped: No mannequin loaded.");
         return;
     }
 
+    Logger::getInstance().log("Performing intersection check...");
     intersectionResultsList->clear();
-    for (const auto& apparelMesh : apparelMeshes) {
-        bool intersects = MeshChecker::intersects(mannequinMesh, apparelMesh);
-        intersectionResultsList->addItem(QString("Apparel mesh intersects: %1").arg(intersects ? "Yes" : "No"));
+    for (size_t i = 0; i < apparelMeshes.size(); ++i) {
+        bool intersects = MeshChecker::intersects(mannequinMesh, apparelMeshes[i]);
+        QString resultText = QString("Apparel %1 intersects: %2").arg(i + 1).arg(intersects ? "Yes" : "No");
+        intersectionResultsList->addItem(resultText);
+        Logger::getInstance().log(resultText.toStdString());
     }
+    Logger::getInstance().log("Intersection check finished.");
 }
 
 void MainWindow::updateCameraStatus(const QString& status)
@@ -453,6 +498,7 @@ void MainWindow::onCheckDegenerate()
         return;
     }
 
+    Logger::getInstance().log("Checking for degenerate faces using external script...");
     QProcess process;
     QStringList args;
     args << "check_degenerate.py" << currentMeshPath;
@@ -460,4 +506,5 @@ void MainWindow::onCheckDegenerate()
     process.waitForFinished();
     QString output = process.readAllStandardOutput();
     QMessageBox::information(this, "Degenerate Check", output);
+    Logger::getInstance().log("Degenerate check output: " + output.toStdString());
 }

@@ -16,22 +16,41 @@ find_package(glm REQUIRED)
 find_package(GLU REQUIRED)
 
 # --- Project Sources ---
-add_executable(ApparelMeshChecker
-    src/main.cpp
-    src/MainWindow.h
-    src/MainWindow.cpp
-    src/ViewerWidget.h
-    src/ViewerWidget.cpp
-    src/Mesh.h
-    src/ObjLoader.h
-    src/ObjLoader.cpp
-    src/MeshChecker.h
-    src/MeshChecker.cpp
-    src/UvChecker.h
-    src/UvChecker.cpp
-    src/Logger.h
-    src/Logger.cpp
-)
+if(WIN32)
+    add_executable(ApparelMeshChecker WIN32
+        src/main.cpp
+        src/MainWindow.h
+        src/MainWindow.cpp
+        src/ViewerWidget.h
+        src/ViewerWidget.cpp
+        src/Mesh.h
+        src/ObjLoader.h
+        src/ObjLoader.cpp
+        src/MeshChecker.h
+        src/MeshChecker.cpp
+        src/UvChecker.h
+        src/UvChecker.cpp
+        src/Logger.h
+        src/Logger.cpp
+    )
+else()
+    add_executable(ApparelMeshChecker
+        src/main.cpp
+        src/MainWindow.h
+        src/MainWindow.cpp
+        src/ViewerWidget.h
+        src/ViewerWidget.cpp
+        src/Mesh.h
+        src/ObjLoader.h
+        src/ObjLoader.cpp
+        src/MeshChecker.h
+        src/MeshChecker.cpp
+        src/UvChecker.h
+        src/UvChecker.cpp
+        src/Logger.h
+        src/Logger.cpp
+    )
+endif()
 
 add_executable(ApparelMeshChecker-cli
     src/main_cli.cpp
@@ -69,6 +88,7 @@ target_include_directories(ApparelMeshChecker
 
 target_link_libraries(ApparelMeshChecker-cli
     PRIVATE
+    Qt6::Core
     CGAL::CGAL
     glm::glm
 )

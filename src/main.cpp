@@ -5,7 +5,7 @@
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
-    Logger::init("apparel_mesh_checker.log");
+    Logger::getInstance().init("apparel_mesh_checker.log");
 
     MainWindow window;
     window.show();

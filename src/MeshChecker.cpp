@@ -34,7 +34,7 @@ MeshChecker::CheckResult MeshChecker::check(const Mesh& mesh, const std::set<Che
     result.uvs_out_of_bounds_count = 0;
 
     try {
-        Logger::log("Starting mesh check...");
+        Logger::getInstance().log("Starting mesh conversion to CGAL format...");
 
         std::vector<Point> points;
         points.reserve(mesh.vertices.size());
@@ -49,14 +49,17 @@ MeshChecker::CheckResult MeshChecker::check(const Mesh& mesh, const std::set<Che
         }
 
         try {
+            Logger::getInstance().log("Repairing polygon soup...");
             CGAL::Polygon_mesh_processing::repair_polygon_soup(points, polygons);
+            Logger::getInstance().log("Orienting polygon soup...");
             CGAL::Polygon_mesh_processing::orient_polygon_soup(points, polygons);
         } catch (const std::exception& e) {
-            Logger::log("CGAL Exception during soup processing: " + std::string(e.what()));
+            Logger::getInstance().log("CGAL Exception during soup processing: " + std::string(e.what()));
         }
 
         CGALMesh cgal_mesh;
         CGAL::Polygon_mesh_processing::polygon_soup_to_polygon_mesh(points, polygons, cgal_mesh);
+        Logger::getInstance().log("Mesh conversion finished.");
         
         // Create a property map to store original face indices
         CGALMesh::Property_map<face_descriptor, std::size_t> original_face_indices;
@@ -73,12 +76,13 @@ MeshChecker::CheckResult MeshChecker::check(const Mesh& mesh, const std::set<Che
 
 
         if (checksToPerform.count(CheckType::Watertight)) {
-            Logger::log("Checking watertightness...");
+            Logger::getInstance().log("Checking watertightness...");
             result.is_watertight = CGAL::is_closed(cgal_mesh);
+            Logger::getInstance().log(std::string("Watertight: ") + (result.is_watertight ? "Yes" : "No"));
         }
 
         if (checksToPerform.count(CheckType::NonManifold)) {
-            Logger::log("Checking non-manifold vertices...");
+            Logger::getInstance().log("Checking non-manifold vertices...");
             std::vector<halfedge_descriptor> non_manifold_halfedges;
             CGAL::Polygon_mesh_processing::non_manifold_vertices(cgal_mesh, std::back_inserter(non_manifold_halfedges));
             result.non_manifold_vertices_count = non_manifold_halfedges.size();
@@ -88,10 +92,11 @@ MeshChecker::CheckResult MeshChecker::check(const Mesh& mesh, const std::set<Che
                     non_manifold_faces_set.insert(original_face_indices[face(h, cgal_mesh)]);
             }
             result.non_manifold_faces.assign(non_manifold_faces_set.begin(), non_manifold_faces_set.end());
+            Logger::getInstance().log("Non-manifold vertices found: " + std::to_string(result.non_manifold_vertices_count));
         }
 
         if (checksToPerform.count(CheckType::SelfIntersect)) {
-            Logger::log("Checking self-intersections...");
+            Logger::getInstance().log("Checking self-intersections...");
             std::vector<std::pair<face_descriptor, face_descriptor>> self_intersections;
             CGAL::Polygon_mesh_processing::self_intersections(cgal_mesh, std::back_inserter(self_intersections));
             result.self_intersections_count = self_intersections.size();
@@ -101,10 +106,11 @@ MeshChecker::CheckResult MeshChecker::check(const Mesh& mesh, const std::set<Che
                 intersecting_faces_set.insert(original_face_indices[pair.second]);
             }
             result.intersecting_faces.assign(intersecting_faces_set.begin(), intersecting_faces_set.end());
+            Logger::getInstance().log("Self-intersections found: " + std::to_string(result.self_intersections_count));
         }
 
         if (checksToPerform.count(CheckType::Holes)) {
-            Logger::log("Checking for holes...");
+            Logger::getInstance().log("Checking for holes...");
             std::vector<halfedge_descriptor> border_edges;
             CGAL::Polygon_mesh_processing::border_halfedges(faces(cgal_mesh), cgal_mesh, std::back_inserter(border_edges));
             
@@ -137,29 +143,68 @@ MeshChecker::CheckResult MeshChecker::check(const Mesh& mesh, const std::set<Che
                 }
             }
             result.holes_count = result.hole_loops.size();
+            Logger::getInstance().log("Holes found: " + std::to_string(result.holes_count));
         }
 
         if (checksToPerform.count(CheckType::DegenerateFaces)) {
-            Logger::log("Checking for degenerate faces...");
-            result.degenerate_faces_count = CGAL::Polygon_mesh_processing::remove_degenerate_faces(cgal_mesh);
+            Logger::getInstance().log("Checking for degenerate faces with relative tolerance...");
+            result.degenerate_faces_count = 0;
+            const double epsilon_sq = 1e-12; // A small tolerance for the squared ratio
+
+            for(face_descriptor fd : faces(cgal_mesh)) {
+                auto h = halfedge(fd, cgal_mesh);
+                const auto& p1 = cgal_mesh.point(source(h, cgal_mesh));
+                const auto& p2 = cgal_mesh.point(target(h, cgal_mesh));
+                const auto& p3 = cgal_mesh.point(target(next(h, cgal_mesh), cgal_mesh));
+
+                K::Vector_3 v1 = p2 - p1;
+                K::Vector_3 v2 = p3 - p1;
+                K::Vector_3 v3 = p3 - p2;
+
+                double a_sq = v1.squared_length();
+                double b_sq = v2.squared_length();
+                double c_sq = v3.squared_length();
+
+                // Avoid division by zero for zero-length edges (which are degenerate)
+                if (a_sq == 0 || b_sq == 0 || c_sq == 0) {
+                    result.degenerate_faces_count++;
+                    continue;
+                }
+                
+                K::Vector_3 cross_prod = CGAL::cross_product(v1, v2);
+                double area_sq_x4 = cross_prod.squared_length(); // This is 4 * (triangle area)^2
+
+                // Find the longest edge squared
+                double max_edge_sq = std::max({a_sq, b_sq, c_sq});
+
+                // Check if area is negligible compared to the longest edge
+                if (area_sq_x4 / max_edge_sq < epsilon_sq) {
+                    result.degenerate_faces_count++;
+                }
+            }
+            Logger::getInstance().log("Degenerate faces found: " + std::to_string(result.degenerate_faces_count));
         }
 
-        Logger::log("Checking UVs...");
+        Logger::getInstance().log("Checking UVs...");
         result.has_uvs = UvChecker::hasUvs(mesh);
+        Logger::getInstance().log(std::string("Has UVs: ") + (result.has_uvs ? "Yes" : "No"));
         if (result.has_uvs) {
             if (checksToPerform.count(CheckType::UVOverlap)) {
+                Logger::getInstance().log("Checking for overlapping UVs...");
                 result.overlapping_uv_islands_count = UvChecker::countOverlappingUvIslands(mesh, result.overlapping_uv_faces);
+                Logger::getInstance().log("Overlapping UV islands found: " + std::to_string(result.overlapping_uv_islands_count));
             }
             if (checksToPerform.count(CheckType::UVBounds)) {
+                Logger::getInstance().log("Checking for UVs out of bounds...");
                 result.uvs_out_of_bounds_count = UvChecker::countUvsOutOfBounds(mesh);
+                Logger::getInstance().log("UVs out of bounds found: " + std::to_string(result.uvs_out_of_bounds_count));
             }
         }
 
-        Logger::log("Mesh check finished.");
     } catch (const std::exception& e) {
-        Logger::log("CGAL Exception: " + std::string(e.what()));
+        Logger::getInstance().log("CGAL Exception: " + std::string(e.what()));
     } catch (...) {
-        Logger::log("An unknown exception occurred during mesh check.");
+        Logger::getInstance().log("An unknown exception occurred during mesh check.");
     }
 
     return result;
@@ -168,6 +213,7 @@ MeshChecker::CheckResult MeshChecker::check(const Mesh& mesh, const std::set<Che
 bool MeshChecker::intersects(const Mesh& mesh1, const Mesh& mesh2)
 {
     try {
+        Logger::getInstance().log("Converting meshes for intersection check...");
         std::vector<Point> points1;
         for (const auto& v : mesh1.vertices) {
             points1.emplace_back(v.x, v.y, v.z);
@@ -189,13 +235,17 @@ bool MeshChecker::intersects(const Mesh& mesh1, const Mesh& mesh2)
         }
         CGALMesh cgal_mesh2;
         CGAL::Polygon_mesh_processing::polygon_soup_to_polygon_mesh(points2, polygons2, cgal_mesh2);
+        Logger::getInstance().log("Mesh conversion finished.");
 
-        return CGAL::Polygon_mesh_processing::do_intersect(cgal_mesh1, cgal_mesh2);
+        Logger::getInstance().log("Performing intersection check...");
+        bool intersects = CGAL::Polygon_mesh_processing::do_intersect(cgal_mesh1, cgal_mesh2);
+        Logger::getInstance().log(std::string("Intersection result: ") + (intersects ? "Yes" : "No"));
+        return intersects;
     } catch (const std::exception& e) {
-        Logger::log("CGAL Exception in intersects: " + std::string(e.what()));
+        Logger::getInstance().log("CGAL Exception in intersects: " + std::string(e.what()));
         return false;
     } catch (...) {
-        Logger::log("An unknown exception occurred during intersection check.");
+        Logger::getInstance().log("An unknown exception occurred during intersection check.");
         return false;
     }
 }
