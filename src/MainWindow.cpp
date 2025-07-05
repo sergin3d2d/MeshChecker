@@ -28,6 +28,7 @@ MainWindow::MainWindow(QWidget *parent)
 {
     setupUI();
     connect(&checkWatcher, &QFutureWatcher<MeshChecker::CheckResult>::finished, this, &MainWindow::onCheckFinished);
+    connect(&intersectionCheckWatcher, &QFutureWatcher<std::vector<IntersectionResult>>::finished, this, &MainWindow::onCheckIntersectionFinished);
     connect(&Logger::getInstance(), &Logger::messageLogged, this, &MainWindow::onLogMessage);
     Logger::getInstance().init("mesh_checker.log");
 }
@@ -139,11 +140,11 @@ void MainWindow::setupUI()
     singleCheckLayout->addWidget(showNonManifoldCheck);
 
     showHolesCheck = new QCheckBox("Show Holes");
-    showHolesCheck->setChecked(true);
+    showHolesCheck->setChecked(false);
     singleCheckLayout->addWidget(showHolesCheck);
 
     showOverlappingUvsCheck = new QCheckBox("Show Overlapping UVs");
-    showOverlappingUvsCheck->setChecked(true);
+    showOverlappingUvsCheck->setChecked(false);
     singleCheckLayout->addWidget(showOverlappingUvsCheck);
 
     connect(showIntersectionsCheck, &QCheckBox::toggled, this, &MainWindow::onVisualizationToggled);
@@ -214,6 +215,27 @@ void MainWindow::setupUI()
     QPushButton *loadApparelButton = new QPushButton("Load Apparel");
     intersectionCheckLayout->addWidget(loadApparelButton);
 
+    QPushButton *checkIntersectionButton = new QPushButton("Check Intersections");
+    intersectionCheckLayout->addWidget(checkIntersectionButton);
+
+    intersectionCountLabel = new QLabel("Intersecting Triangles: -");
+    intersectionCheckLayout->addWidget(intersectionCountLabel);
+
+    QGroupBox *visibilityGroup = new QGroupBox("Visibility");
+    QVBoxLayout *visibilityLayout = new QVBoxLayout;
+    showMannequinCheck = new QCheckBox("Show Mannequin");
+    showMannequinCheck->setChecked(true);
+    visibilityLayout->addWidget(showMannequinCheck);
+    showApparelCheck = new QCheckBox("Show Apparel");
+    showApparelCheck->setChecked(true);
+    visibilityLayout->addWidget(showApparelCheck);
+    visibilityGroup->setLayout(visibilityLayout);
+    intersectionCheckLayout->addWidget(visibilityGroup);
+
+    showIntersectionsCheck_IntersectionTab = new QCheckBox("Show Intersections");
+    showIntersectionsCheck_IntersectionTab->setChecked(true);
+    intersectionCheckLayout->addWidget(showIntersectionsCheck_IntersectionTab);
+
     intersectionResultsList = new QListWidget;
     intersectionCheckLayout->addWidget(intersectionResultsList);
 
@@ -221,6 +243,10 @@ void MainWindow::setupUI()
 
     connect(loadMannequinButton, &QPushButton::clicked, this, &MainWindow::onLoadMannequin);
     connect(loadApparelButton, &QPushButton::clicked, this, &MainWindow::onLoadApparel);
+    connect(checkIntersectionButton, &QPushButton::clicked, this, &MainWindow::onCheckIntersection);
+    connect(showMannequinCheck, &QCheckBox::toggled, this, &MainWindow::onIntersectionVisualizationToggled);
+    connect(showApparelCheck, &QCheckBox::toggled, this, &MainWindow::onIntersectionVisualizationToggled);
+    connect(showIntersectionsCheck_IntersectionTab, &QCheckBox::toggled, this, &MainWindow::onIntersectionVisualizationToggled);
 
     // Right panel for 3D viewer
     viewerWidget = new ViewerWidget;
@@ -250,7 +276,7 @@ void MainWindow::onLoadMesh()
 
     // --- Definitive State Cleanup ---
     // 1. Clear all data from the viewer's GPU buffers
-    viewerWidget->clearMesh();
+    viewerWidget->clearMeshes();
     // 2. Clear the results from the last check
     lastCheckResult.clear();
     // 3. Clear the mesh object itself
@@ -264,7 +290,7 @@ void MainWindow::onLoadMesh()
         currentMesh.colors.assign(currentMesh.vertices.size(), glm::vec3(0.7f, 0.7f, 0.7f));
         
         // 5. Send the clean mesh to the viewer
-        viewerWidget->setMesh(&currentMesh, &lastCheckResult);
+        viewerWidget->setMeshes({&currentMesh}, &lastCheckResult, nullptr);
         viewerWidget->focusOnMesh();
         Logger::getInstance().log("Mesh loaded successfully.");
     } else {
@@ -409,6 +435,8 @@ void MainWindow::onLoadMannequin()
             Logger::getInstance().log("Failed to load mannequin.");
         } else {
             Logger::getInstance().log("Mannequin loaded successfully.");
+            mannequinMesh.colors.assign(mannequinMesh.vertices.size(), glm::vec3(0.7f, 0.7f, 0.7f));
+            updateIntersectionView();
         }
     }
 }
@@ -425,34 +453,114 @@ void MainWindow::onLoadApparel()
     for (const QString& filePath : filePaths) {
         Mesh mesh;
         if (ObjLoader::load(filePath.toStdString(), mesh)) {
+            mesh.colors.assign(mesh.vertices.size(), glm::vec3(0.7f, 0.7f, 0.7f));
             apparelMeshes.push_back(mesh);
             Logger::getInstance().log("Loaded apparel item: " + filePath.toStdString());
         } else {
             Logger::getInstance().log("Failed to load apparel item: " + filePath.toStdString());
         }
     }
-
-    if (mannequinMesh.vertices.empty()) {
-        QMessageBox::warning(this, "Warning", "No mannequin loaded.");
-        Logger::getInstance().log("Intersection check skipped: No mannequin loaded.");
-        return;
-    }
-
-    Logger::getInstance().log("Performing intersection check...");
-    intersectionResultsList->clear();
-    for (size_t i = 0; i < apparelMeshes.size(); ++i) {
-        bool intersects = MeshChecker::intersects(mannequinMesh, apparelMeshes[i]);
-        QString resultText = QString("Apparel %1 intersects: %2").arg(i + 1).arg(intersects ? "Yes" : "No");
-        intersectionResultsList->addItem(resultText);
-        Logger::getInstance().log(resultText.toStdString());
-    }
-    Logger::getInstance().log("Intersection check finished.");
+    updateIntersectionView();
 }
 
 void MainWindow::updateCameraStatus(const QString& status)
 {
     cameraStatusLabel->setText(status);
 }
+
+void MainWindow::onCheckIntersection()
+{
+    if (mannequinMesh.vertices.empty() || apparelMeshes.empty()) {
+        QMessageBox::warning(this, "Warning", "Please load both a mannequin and at least one apparel item.");
+        return;
+    }
+
+    Logger::getInstance().log("Starting intersection check...");
+
+    progressDialog = new QProgressDialog("Checking intersections...", "Cancel", 0, 0, this);
+    progressDialog->setWindowModality(Qt::WindowModal);
+    progressDialog->show();
+
+    auto checkFunc = [this]() {
+        std::vector<IntersectionResult> results;
+        for (size_t i = 0; i < apparelMeshes.size(); ++i) {
+            IntersectionResult result;
+            result.intersects = MeshChecker::intersects(mannequinMesh, apparelMeshes[i], result.intersecting_faces);
+            results.push_back(result);
+        }
+        return results;
+    };
+
+    QFuture<std::vector<IntersectionResult>> future = QtConcurrent::run(checkFunc);
+    intersectionCheckWatcher.setFuture(future);
+}
+
+void MainWindow::onCheckIntersectionFinished()
+{
+    progressDialog->hide();
+    intersectionResults = intersectionCheckWatcher.result();
+
+    intersectionResultsList->clear();
+    int totalIntersectingTriangles = 0;
+    for (size_t i = 0; i < intersectionResults.size(); ++i) {
+        QString resultText = QString("Apparel %1 intersects: %2").arg(i + 1).arg(intersectionResults[i].intersects ? "Yes" : "No");
+        if (intersectionResults[i].intersects) {
+            totalIntersectingTriangles += intersectionResults[i].intersecting_faces.size();
+            resultText += QString(" (%1 triangles)").arg(intersectionResults[i].intersecting_faces.size());
+        }
+        intersectionResultsList->addItem(resultText);
+        Logger::getInstance().log(resultText.toStdString());
+    }
+    intersectionCountLabel->setText(QString("Intersecting Triangles: %1").arg(totalIntersectingTriangles));
+
+    updateIntersectionView();
+    Logger::getInstance().log("Intersection check finished.");
+}
+
+void MainWindow::onIntersectionVisualizationToggled()
+{
+    updateIntersectionView();
+}
+
+void MainWindow::updateIntersectionView()
+{
+    // Reset colors
+    if (!mannequinMesh.vertices.empty()) {
+        mannequinMesh.colors.assign(mannequinMesh.vertices.size(), glm::vec3(0.7f, 0.7f, 0.7f));
+    }
+    for (auto& apparelMesh : apparelMeshes) {
+        apparelMesh.colors.assign(apparelMesh.vertices.size(), glm::vec3(0.7f, 0.7f, 0.7f));
+    }
+
+    std::vector<const Mesh*> meshes;
+    if (showMannequinCheck->isChecked() && !mannequinMesh.vertices.empty()) {
+        meshes.push_back(&mannequinMesh);
+    }
+    if (showApparelCheck->isChecked()) {
+        for (const auto& apparelMesh : apparelMeshes) {
+            meshes.push_back(&apparelMesh);
+        }
+    }
+
+    if (showIntersectionsCheck_IntersectionTab->isChecked()) {
+        for (size_t i = 0; i < apparelMeshes.size(); ++i) {
+            if (i < intersectionResults.size() && intersectionResults[i].intersects) {
+                for (const auto& face_idx : intersectionResults[i].intersecting_faces) {
+                    for (int j = 0; j < 3; ++j) {
+                        unsigned int vertex_index = apparelMeshes[i].vertex_indices[face_idx * 3 + j];
+                        if (vertex_index < apparelMeshes[i].colors.size()) {
+                           apparelMeshes[i].colors[vertex_index] = glm::vec3(1.0f, 0.0f, 0.0f); // Red
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    viewerWidget->setMeshes(meshes, nullptr, &intersectionResults);
+    viewerWidget->focusOnMesh();
+}
+
 
 void MainWindow::onVisualizationToggled()
 {
@@ -488,7 +596,7 @@ void MainWindow::onVisualizationToggled()
         }
     }
 
-    viewerWidget->setMesh(&currentMesh, &lastCheckResult);
+    viewerWidget->setMeshes({&currentMesh}, &lastCheckResult, nullptr);
 }
 
 void MainWindow::onCheckDegenerate()

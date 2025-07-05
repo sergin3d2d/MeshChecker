@@ -6,6 +6,8 @@
 #include <glm/glm.hpp>
 #include "Mesh.h"
 #include "MeshChecker.h"
+#include "IntersectionResult.h"
+
 
 class ViewerWidget : public QOpenGLWidget, protected QOpenGLFunctions
 {
@@ -15,8 +17,8 @@ public:
     ViewerWidget(QWidget *parent = nullptr);
     ~ViewerWidget();
 
-    void setMesh(const Mesh* mesh, const MeshChecker::CheckResult* result = nullptr);
-    void clearMesh();
+    void setMeshes(const std::vector<const Mesh*>& meshes, const MeshChecker::CheckResult* result, const std::vector<IntersectionResult>* intResult);
+    void clearMeshes();
     void focusOnMesh();
 
 signals:
@@ -34,14 +36,15 @@ private:
     void setupBuffers();
     void updateCameraStatus();
 
-    const Mesh* currentMesh = nullptr;
+    std::vector<const Mesh*> meshes;
+    const std::vector<IntersectionResult>* intersectionResults = nullptr;
     const MeshChecker::CheckResult* checkResult = nullptr;
 
     // VBO IDs
-    GLuint vbo_vertices = 0;
-    GLuint vbo_normals = 0;
-    GLuint vbo_colors = 0;
-    GLuint ibo_indices = 0;
+    std::vector<GLuint> vbo_vertices_list;
+    std::vector<GLuint> vbo_normals_list;
+    std::vector<GLuint> vbo_colors_list;
+    std::vector<GLuint> ibo_indices_list;
 
     glm::vec3 modelCenter = glm::vec3(0.0f);
     float modelRadius = 1.0f;

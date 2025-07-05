@@ -15,50 +15,43 @@ ViewerWidget::ViewerWidget(QWidget *parent)
 
 ViewerWidget::~ViewerWidget()
 {
-    if (vbo_vertices) glDeleteBuffers(1, &vbo_vertices);
-    if (vbo_normals) glDeleteBuffers(1, &vbo_normals);
-    if (vbo_colors) glDeleteBuffers(1, &vbo_colors);
-    if (ibo_indices) glDeleteBuffers(1, &ibo_indices);
+    clearMeshes();
 }
 
-void ViewerWidget::setMesh(const Mesh* mesh, const MeshChecker::CheckResult* result)
+void ViewerWidget::setMeshes(const std::vector<const Mesh*>& newMeshes, const MeshChecker::CheckResult* result, const std::vector<IntersectionResult>* intResult)
 {
-    currentMesh = mesh;
+    meshes = newMeshes;
     checkResult = result;
-    if (currentMesh) {
-        setupBuffers();
-    }
-    update(); // Trigger a repaint
+    intersectionResults = intResult;
+    update(); // Trigger a repaint, which will call paintGL() on the right thread
 }
 
-void ViewerWidget::clearMesh()
+void ViewerWidget::clearMeshes()
 {
-    if (vbo_vertices) glDeleteBuffers(1, &vbo_vertices);
-    if (vbo_normals) glDeleteBuffers(1, &vbo_normals);
-    if (vbo_colors) glDeleteBuffers(1, &vbo_colors);
-    if (ibo_indices) glDeleteBuffers(1, &ibo_indices);
-    vbo_vertices = vbo_normals = vbo_colors = ibo_indices = 0;
-    currentMesh = nullptr;
+    meshes.clear();
     checkResult = nullptr;
+    intersectionResults = nullptr;
     update();
 }
 
 void ViewerWidget::focusOnMesh()
 {
-    if (!currentMesh || currentMesh->vertices.empty()) {
+    if (meshes.empty()) {
         return;
     }
 
     glm::vec3 min_v(std::numeric_limits<float>::max());
     glm::vec3 max_v(std::numeric_limits<float>::lowest());
 
-    for (const auto& v : currentMesh->vertices) {
-        min_v.x = std::min(min_v.x, v.x);
-        min_v.y = std::min(min_v.y, v.y);
-        min_v.z = std::min(min_v.z, v.z);
-        max_v.x = std::max(max_v.x, v.x);
-        max_v.y = std::max(max_v.y, v.y);
-        max_v.z = std::max(max_v.z, v.z);
+    for (const auto& mesh : meshes) {
+        for (const auto& v : mesh->vertices) {
+            min_v.x = std::min(min_v.x, v.x);
+            min_v.y = std::min(min_v.y, v.y);
+            min_v.z = std::min(min_v.z, v.z);
+            max_v.x = std::max(max_v.x, v.x);
+            max_v.y = std::max(max_v.y, v.y);
+            max_v.z = std::max(max_v.z, v.z);
+        }
     }
 
     modelCenter = (min_v + max_v) / 2.0f;
@@ -72,40 +65,7 @@ void ViewerWidget::focusOnMesh()
     updateCameraStatus();
 }
 
-void ViewerWidget::setupBuffers()
-{
-    if (!currentMesh) return;
 
-    // Clean up old buffers
-    if (vbo_vertices) glDeleteBuffers(1, &vbo_vertices);
-    if (vbo_normals) glDeleteBuffers(1, &vbo_normals);
-    if (vbo_colors) glDeleteBuffers(1, &vbo_colors);
-    if (ibo_indices) glDeleteBuffers(1, &ibo_indices);
-
-    // Vertex Buffer
-    glGenBuffers(1, &vbo_vertices);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo_vertices);
-    glBufferData(GL_ARRAY_BUFFER, currentMesh->vertices.size() * sizeof(glm::vec3), currentMesh->vertices.data(), GL_STATIC_DRAW);
-
-    // Normal Buffer
-    if (!currentMesh->normals.empty()) {
-        glGenBuffers(1, &vbo_normals);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_normals);
-        glBufferData(GL_ARRAY_BUFFER, currentMesh->normals.size() * sizeof(glm::vec3), currentMesh->normals.data(), GL_STATIC_DRAW);
-    }
-
-    // Color Buffer
-    if (!currentMesh->colors.empty()) {
-        glGenBuffers(1, &vbo_colors);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_colors);
-        glBufferData(GL_ARRAY_BUFFER, currentMesh->colors.size() * sizeof(glm::vec3), currentMesh->colors.data(), GL_STATIC_DRAW);
-    }
-
-    // Index Buffer
-    glGenBuffers(1, &ibo_indices);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo_indices);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, currentMesh->vertex_indices.size() * sizeof(unsigned int), currentMesh->vertex_indices.data(), GL_STATIC_DRAW);
-}
 
 void ViewerWidget::initializeGL()
 {
@@ -145,9 +105,69 @@ void ViewerWidget::paintGL()
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    if (!currentMesh || vbo_vertices == 0 || ibo_indices == 0) {
+    // If meshes are empty, there's nothing to do.
+    if (meshes.empty()) {
+        // Clean up old buffers if they exist
+        if (!vbo_vertices_list.empty()) {
+            glDeleteBuffers(vbo_vertices_list.size(), vbo_vertices_list.data());
+            glDeleteBuffers(vbo_normals_list.size(), vbo_normals_list.data());
+            glDeleteBuffers(vbo_colors_list.size(), vbo_colors_list.data());
+            glDeleteBuffers(ibo_indices_list.size(), ibo_indices_list.data());
+            vbo_vertices_list.clear();
+            vbo_normals_list.clear();
+            vbo_colors_list.clear();
+            ibo_indices_list.clear();
+        }
         return;
     }
+
+    // If the number of meshes has changed, we need to re-generate buffers
+    if (vbo_vertices_list.size() != meshes.size()) {
+        // Clean up old buffers
+        if (!vbo_vertices_list.empty()) {
+            glDeleteBuffers(vbo_vertices_list.size(), vbo_vertices_list.data());
+            glDeleteBuffers(vbo_normals_list.size(), vbo_normals_list.data());
+            glDeleteBuffers(vbo_colors_list.size(), vbo_colors_list.data());
+            glDeleteBuffers(ibo_indices_list.size(), ibo_indices_list.data());
+        }
+
+        // Allocate new buffer IDs
+        vbo_vertices_list.resize(meshes.size(), 0);
+        vbo_normals_list.resize(meshes.size(), 0);
+        vbo_colors_list.resize(meshes.size(), 0);
+        ibo_indices_list.resize(meshes.size(), 0);
+        glGenBuffers(meshes.size(), vbo_vertices_list.data());
+        glGenBuffers(meshes.size(), vbo_normals_list.data());
+        glGenBuffers(meshes.size(), vbo_colors_list.data());
+        glGenBuffers(meshes.size(), ibo_indices_list.data());
+    }
+
+    // --- Upload data to buffers ---
+    for (size_t i = 0; i < meshes.size(); ++i) {
+        const auto& mesh = meshes[i];
+        if (!mesh) continue;
+
+        // Vertex Buffer
+        glBindBuffer(GL_ARRAY_BUFFER, vbo_vertices_list[i]);
+        glBufferData(GL_ARRAY_BUFFER, mesh->vertices.size() * sizeof(glm::vec3), mesh->vertices.data(), GL_DYNAMIC_DRAW);
+
+        // Normal Buffer
+        if (!mesh->normals.empty()) {
+            glBindBuffer(GL_ARRAY_BUFFER, vbo_normals_list[i]);
+            glBufferData(GL_ARRAY_BUFFER, mesh->normals.size() * sizeof(glm::vec3), mesh->normals.data(), GL_DYNAMIC_DRAW);
+        }
+
+        // Color Buffer
+        if (!mesh->colors.empty()) {
+            glBindBuffer(GL_ARRAY_BUFFER, vbo_colors_list[i]);
+            glBufferData(GL_ARRAY_BUFFER, mesh->colors.size() * sizeof(glm::vec3), mesh->colors.data(), GL_DYNAMIC_DRAW);
+        }
+
+        // Index Buffer
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo_indices_list[i]);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh->vertex_indices.size() * sizeof(unsigned int), mesh->vertex_indices.data(), GL_DYNAMIC_DRAW);
+    }
+
 
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
@@ -165,33 +185,39 @@ void ViewerWidget::paintGL()
     // Apply the model transformation
     glTranslatef(-modelCenter.x, -modelCenter.y, -modelCenter.z);
 
-    // --- Draw the main mesh using VBOs ---
-    glEnable(GL_LIGHTING);
-    
-    glEnableClientState(GL_VERTEX_ARRAY);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo_vertices);
-    glVertexPointer(3, GL_FLOAT, 0, nullptr);
+    for (size_t i = 0; i < meshes.size(); ++i) {
+        const auto& mesh = meshes[i];
+        if (!mesh || i >= vbo_vertices_list.size() || vbo_vertices_list[i] == 0 || i >= ibo_indices_list.size() || ibo_indices_list[i] == 0) {
+            continue;
+        }
 
-    if (vbo_normals) {
-        glEnableClientState(GL_NORMAL_ARRAY);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_normals);
-        glNormalPointer(GL_FLOAT, 0, nullptr);
+        // --- Draw the main mesh using VBOs ---
+        glEnable(GL_LIGHTING);
+        
+        glEnableClientState(GL_VERTEX_ARRAY);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo_vertices_list[i]);
+        glVertexPointer(3, GL_FLOAT, 0, nullptr);
+
+        if (i < vbo_normals_list.size() && vbo_normals_list[i] && !mesh->normals.empty()) {
+            glEnableClientState(GL_NORMAL_ARRAY);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo_normals_list[i]);
+            glNormalPointer(GL_FLOAT, 0, nullptr);
+        }
+
+        if (i < vbo_colors_list.size() && vbo_colors_list[i] && !mesh->colors.empty()) {
+            glEnableClientState(GL_COLOR_ARRAY);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo_colors_list[i]);
+            glColorPointer(3, GL_FLOAT, 0, nullptr);
+        } else {
+            glColor3f(0.7f, 0.7f, 0.7f); // Default color if no color buffer
+        }
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo_indices_list[i]);
+        glDrawElements(GL_TRIANGLES, mesh->vertex_indices.size(), GL_UNSIGNED_INT, nullptr);
+        glDisableClientState(GL_VERTEX_ARRAY);
+        glDisableClientState(GL_NORMAL_ARRAY);
+        glDisableClientState(GL_COLOR_ARRAY);
     }
-
-    if (vbo_colors) {
-        glEnableClientState(GL_COLOR_ARRAY);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_colors);
-        glColorPointer(3, GL_FLOAT, 0, nullptr);
-    } else {
-        glColor3f(0.7f, 0.7f, 0.7f); // Default color if no color buffer
-    }
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo_indices);
-    glDrawElements(GL_TRIANGLES, currentMesh->vertex_indices.size(), GL_UNSIGNED_INT, nullptr);
-
-    glDisableClientState(GL_VERTEX_ARRAY);
-    glDisableClientState(GL_NORMAL_ARRAY);
-    glDisableClientState(GL_COLOR_ARRAY);
 
     // --- Draw hole edges if they exist ---
     if (checkResult && !checkResult->hole_loops.empty()) {
@@ -202,7 +228,7 @@ void ViewerWidget::paintGL()
         for (const auto& loop : checkResult->hole_loops) {
             glBegin(GL_LINE_LOOP);
             for (const auto& vertex_idx : loop) {
-                const auto& v = currentMesh->vertices[vertex_idx];
+                const auto& v = meshes[0]->vertices[vertex_idx];
                 glVertex3f(v.x, v.y, v.z);
             }
             glEnd();

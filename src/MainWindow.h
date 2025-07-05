@@ -5,6 +5,8 @@
 #include <QFutureWatcher>
 #include "Mesh.h"
 #include "MeshChecker.h"
+#include "IntersectionResult.h"
+
 
 class QTabWidget;
 class ViewerWidget;
@@ -32,6 +34,9 @@ private slots:
     void onExportCsv();
     void onLoadMannequin();
     void onLoadApparel();
+    void onCheckIntersection();
+    void onCheckIntersectionFinished();
+    void onIntersectionVisualizationToggled();
     void updateCameraStatus(const QString& status);
     void onVisualizationToggled();
     void onCheckDegenerate();
@@ -39,6 +44,7 @@ private slots:
 
 private:
     void setupUI();
+    void updateIntersectionView();
 
     QTabWidget *tabWidget;
     ViewerWidget *viewerWidget;
@@ -86,6 +92,11 @@ private:
 
     // Intersection Check
     QListWidget* intersectionResultsList;
+    QLabel* intersectionCountLabel;
+    QCheckBox* showMannequinCheck;
+    QCheckBox* showApparelCheck;
+    QCheckBox* showIntersectionsCheck_IntersectionTab;
+    std::vector<IntersectionResult> intersectionResults;
 
     // Status Bar
     QLabel* fileNameLabel;
@@ -93,6 +104,7 @@ private:
 
     // Async
     QFutureWatcher<MeshChecker::CheckResult> checkWatcher;
+    QFutureWatcher<std::vector<IntersectionResult>> intersectionCheckWatcher;
     QProgressDialog* progressDialog;
 };
 

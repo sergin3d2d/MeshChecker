@@ -12,13 +12,29 @@
 #include <CGAL/Polygon_mesh_processing/self_intersections.h>
 #include <CGAL/Polygon_mesh_processing/repair.h>
 #include <CGAL/Polygon_mesh_processing/corefinement.h>
+#include <CGAL/Polygon_mesh_processing/remesh.h>
+#include <CGAL/Polygon_mesh_processing/measure.h>
+#include <CGAL/boost/graph/helpers.h>
+#include <CGAL/Side_of_triangle_mesh.h>
+#include <CGAL/AABB_tree.h>
+#include <CGAL/AABB_traits.h>
+#include <CGAL/AABB_triangle_primitive.h>
+#include <set>
+#include <numeric>
 
+namespace PMP = CGAL::Polygon_mesh_processing;
 
 typedef CGAL::Simple_cartesian<double> K;
 typedef K::Point_3 Point;
+typedef K::Triangle_3 Triangle;
 typedef CGAL::Surface_mesh<Point> CGALMesh;
 typedef CGALMesh::Face_index face_descriptor;
 typedef CGALMesh::Halfedge_index halfedge_descriptor;
+
+typedef std::vector<Triangle>::iterator Triangle_iterator;
+typedef CGAL::AABB_triangle_primitive<K, Triangle_iterator> Primitive;
+typedef CGAL::AABB_traits<K, Primitive> Traits;
+typedef CGAL::AABB_tree<Traits> Tree;
 
 MeshChecker::CheckResult MeshChecker::check(const Mesh& mesh, const std::set<CheckType>& checksToPerform)
 {
@@ -210,37 +226,75 @@ MeshChecker::CheckResult MeshChecker::check(const Mesh& mesh, const std::set<Che
     return result;
 }
 
-bool MeshChecker::intersects(const Mesh& mesh1, const Mesh& mesh2)
+#include "MeshChecker.h"
+#include "UvChecker.h"
+#include "Logger.h"
+
+#include <CGAL/Simple_cartesian.h>
+#include <CGAL/Surface_mesh.h>
+#include <CGAL/Polygon_mesh_processing/orient_polygon_soup.h>
+#include <CGAL/Polygon_mesh_processing/repair_polygon_soup.h>
+#include <CGAL/Polygon_mesh_processing/polygon_soup_to_polygon_mesh.h>
+#include <CGAL/Polygon_mesh_processing/border.h>
+#include <CGAL/Polygon_mesh_processing/manifoldness.h>
+#include <CGAL/Polygon_mesh_processing/self_intersections.h>
+#include <CGAL/Polygon_mesh_processing/repair.h>
+#include <CGAL/Polygon_mesh_processing/corefinement.h>
+#include <CGAL/Polygon_mesh_processing/measure.h>
+#include <CGAL/boost/graph/helpers.h>
+#include <set>
+#include <numeric>
+
+namespace PMP = CGAL::Polygon_mesh_processing;
+
+typedef CGAL::Simple_cartesian<double> K;
+typedef K::Point_3 Point;
+typedef CGAL::Surface_mesh<Point> CGALMesh;
+typedef CGALMesh::Face_index face_descriptor;
+typedef CGALMesh::Halfedge_index halfedge_descriptor;
+
+
+
+bool MeshChecker::intersects(const Mesh& mesh1, const Mesh& mesh2, std::vector<int>& intersecting_faces)
 {
     try {
-        Logger::getInstance().log("Converting meshes for intersection check...");
-        std::vector<Point> points1;
-        for (const auto& v : mesh1.vertices) {
-            points1.emplace_back(v.x, v.y, v.z);
-        }
-        std::vector<std::vector<std::size_t>> polygons1;
+        Logger::getInstance().log("Building triangle lists for intersection check...");
+
+        // --- Process Mesh 1 (Mannequin) ---
+        std::vector<Triangle> triangles1;
+        triangles1.reserve(mesh1.vertex_indices.size() / 3);
         for (size_t i = 0; i < mesh1.vertex_indices.size(); i += 3) {
-            polygons1.push_back({mesh1.vertex_indices[i], mesh1.vertex_indices[i+1], mesh1.vertex_indices[i+2]});
+            const auto& p1 = mesh1.vertices[mesh1.vertex_indices[i]];
+            const auto& p2 = mesh1.vertices[mesh1.vertex_indices[i+1]];
+            const auto& p3 = mesh1.vertices[mesh1.vertex_indices[i+2]];
+            triangles1.emplace_back(Point(p1.x, p1.y, p1.z), Point(p2.x, p2.y, p2.z), Point(p3.x, p3.y, p3.z));
         }
-        CGALMesh cgal_mesh1;
-        CGAL::Polygon_mesh_processing::polygon_soup_to_polygon_mesh(points1, polygons1, cgal_mesh1);
 
-        std::vector<Point> points2;
-        for (const auto& v : mesh2.vertices) {
-            points2.emplace_back(v.x, v.y, v.z);
-        }
-        std::vector<std::vector<std::size_t>> polygons2;
+        // --- Process Mesh 2 (Apparel) ---
+        std::vector<Triangle> triangles2;
+        triangles2.reserve(mesh2.vertex_indices.size() / 3);
         for (size_t i = 0; i < mesh2.vertex_indices.size(); i += 3) {
-            polygons2.push_back({mesh2.vertex_indices[i], mesh2.vertex_indices[i+1], mesh2.vertex_indices[i+2]});
+            const auto& p1 = mesh2.vertices[mesh2.vertex_indices[i]];
+            const auto& p2 = mesh2.vertices[mesh2.vertex_indices[i+1]];
+            const auto& p3 = mesh2.vertices[mesh2.vertex_indices[i+2]];
+            triangles2.emplace_back(Point(p1.x, p1.y, p1.z), Point(p2.x, p2.y, p2.z), Point(p3.x, p3.y, p3.z));
         }
-        CGALMesh cgal_mesh2;
-        CGAL::Polygon_mesh_processing::polygon_soup_to_polygon_mesh(points2, polygons2, cgal_mesh2);
-        Logger::getInstance().log("Mesh conversion finished.");
 
-        Logger::getInstance().log("Performing intersection check...");
-        bool intersects = CGAL::Polygon_mesh_processing::do_intersect(cgal_mesh1, cgal_mesh2);
-        Logger::getInstance().log(std::string("Intersection result: ") + (intersects ? "Yes" : "No"));
-        return intersects;
+        Logger::getInstance().log("Building AABB tree for mannequin...");
+        Tree tree1(triangles1.begin(), triangles1.end());
+        tree1.accelerate_distance_queries();
+
+        intersecting_faces.clear();
+        Logger::getInstance().log("Checking apparel faces for intersection...");
+        for(size_t i = 0; i < triangles2.size(); ++i) {
+            if(tree1.do_intersect(triangles2[i])) {
+                intersecting_faces.push_back(i);
+            }
+        }
+
+        Logger::getInstance().log("Found " + std::to_string(intersecting_faces.size()) + " intersecting faces on apparel.");
+        return !intersecting_faces.empty();
+
     } catch (const std::exception& e) {
         Logger::getInstance().log("CGAL Exception in intersects: " + std::string(e.what()));
         return false;
@@ -249,5 +303,8 @@ bool MeshChecker::intersects(const Mesh& mesh1, const Mesh& mesh2)
         return false;
     }
 }
+
+
+
 
 

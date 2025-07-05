@@ -51,7 +51,7 @@ public:
     };
 
     static CheckResult check(const Mesh& mesh, const std::set<CheckType>& checksToPerform);
-    static bool intersects(const Mesh& mesh1, const Mesh& mesh2);
+    static bool intersects(const Mesh& mesh1, const Mesh& mesh2, std::vector<int>& intersecting_faces);
 };
 
 #endif // MESHCHECKER_H
