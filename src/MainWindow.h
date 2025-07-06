@@ -23,6 +23,7 @@ class QProgressDialog;
 class QCheckBox;
 class QGroupBox;
 class QTextEdit;
+class QSpinBox;
 
 class MainWindow : public QMainWindow
 {
@@ -97,6 +98,8 @@ private:
     QCheckBox* batchCheckDegenerateFacesCheck;
     QCheckBox* batchCheckUVOverlapCheck;
     QCheckBox* batchCheckUVBoundsCheck;
+    QCheckBox* batchAutoThreadsCheck;
+    QSpinBox* batchThreadsSpinBox;
 
     // Intersection Check
     QListWidget* intersectionResultsList;

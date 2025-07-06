@@ -22,6 +22,7 @@
 #include <QCheckBox>
 #include <QSplitter>
 #include <QTextEdit>
+#include <QSpinBox>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -199,6 +200,22 @@ void MainWindow::setupUI()
     batchChecksLayout->addWidget(batchCheckUVBoundsCheck);
     batchChecksGroup->setLayout(batchChecksLayout);
     batchCheckLayout->addWidget(batchChecksGroup);
+
+    // Thread count
+    QGroupBox *threadsGroup = new QGroupBox("Parallelism");
+    QHBoxLayout *threadsLayout = new QHBoxLayout;
+    batchAutoThreadsCheck = new QCheckBox("Auto");
+    batchAutoThreadsCheck->setChecked(true);
+    threadsLayout->addWidget(batchAutoThreadsCheck);
+    batchThreadsSpinBox = new QSpinBox;
+    batchThreadsSpinBox->setRange(1, 128);
+    batchThreadsSpinBox->setValue(QThread::idealThreadCount());
+    batchThreadsSpinBox->setEnabled(false);
+    threadsLayout->addWidget(batchThreadsSpinBox);
+    threadsGroup->setLayout(threadsLayout);
+    batchCheckLayout->addWidget(threadsGroup);
+
+    connect(batchAutoThreadsCheck, &QCheckBox::toggled, batchThreadsSpinBox, &QSpinBox::setDisabled);
 
     QPushButton *exportCsvButton = new QPushButton("Export to CSV");
     batchCheckLayout->addWidget(exportCsvButton);
@@ -390,6 +407,9 @@ void MainWindow::onSelectFolder()
             return {filePath, MeshChecker::CheckResult()};
         }
     };
+
+    int numThreads = batchAutoThreadsCheck->isChecked() ? QThread::idealThreadCount() : batchThreadsSpinBox->value();
+    QThreadPool::globalInstance()->setMaxThreadCount(numThreads);
 
     batchCheckWatcher.setFuture(QtConcurrent::mapped(files, processFile));
     progressDialog->show();

@@ -30,7 +30,7 @@ void printResult(const MeshChecker::CheckResult& result) {
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "Usage: ApparelMeshChecker-cli --single <file.obj>" << std::endl;
-        std::cerr << "       ApparelMeshChecker-cli --batch <folder_path> [--output <results.csv>]" << std::endl;
+        std::cerr << "       ApparelMeshChecker-cli --batch <folder_path> [--output <results.csv>] [--threads <N|auto>]" << std::endl;
         std::cerr << "       ApparelMeshChecker-cli --intersect --mannequin <mannequin.obj> --apparel <apparel1.obj> ..." << std::endl;
         return 1;
     }
@@ -60,8 +60,20 @@ int main(int argc, char* argv[]) {
     } else if (mode == "--batch") {
         std::string folderPath = argv[2];
         std::string outputPath = "results.csv";
-        if (argc > 3 && std::string(argv[3]) == "--output") {
-            outputPath = argv[4];
+        unsigned int num_threads = std::thread::hardware_concurrency();
+
+        for (int i = 3; i < argc; ++i) {
+            std::string arg = argv[i];
+            if (arg == "--output" && i + 1 < argc) {
+                outputPath = argv[++i];
+            } else if (arg == "--threads" && i + 1 < argc) {
+                std::string val = argv[++i];
+                if (val == "auto") {
+                    num_threads = std::thread::hardware_concurrency();
+                } else {
+                    num_threads = std::stoi(val);
+                }
+            }
         }
 
         std::ofstream outputFile(outputPath);
@@ -122,7 +134,6 @@ int main(int argc, char* argv[]) {
             }
         };
 
-        unsigned int num_threads = std::thread::hardware_concurrency();
         std::vector<std::thread> threads;
         for (unsigned int i = 0; i < num_threads; ++i) {
             threads.emplace_back(worker);
