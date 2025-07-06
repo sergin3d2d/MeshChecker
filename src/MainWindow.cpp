@@ -29,6 +29,8 @@ MainWindow::MainWindow(QWidget *parent)
     setupUI();
     connect(&checkWatcher, &QFutureWatcher<MeshChecker::CheckResult>::finished, this, &MainWindow::onCheckFinished);
     connect(&intersectionCheckWatcher, &QFutureWatcher<std::vector<IntersectionResult>>::finished, this, &MainWindow::onCheckIntersectionFinished);
+    connect(&batchCheckWatcher, &QFutureWatcher<BatchCheckResult>::resultReadyAt, this, &MainWindow::onBatchResultReady);
+    connect(&batchCheckWatcher, &QFutureWatcher<BatchCheckResult>::finished, this, &MainWindow::onBatchCheckFinished);
     connect(&Logger::getInstance(), &Logger::messageLogged, this, &MainWindow::onLogMessage);
     Logger::getInstance().init("mesh_checker.log");
 }
@@ -282,7 +284,7 @@ void MainWindow::onLoadMesh()
     // 3. Clear the mesh object itself
     currentMesh = Mesh();
 
-    if (ObjLoader::load(filePath.toStdString(), currentMesh)) {
+    if (ObjLoader::load_indexed(filePath.toStdString(), currentMesh)) {
         currentMeshPath = filePath;
         fileNameLabel->setText(QFileInfo(filePath).fileName());
         
@@ -355,14 +357,23 @@ void MainWindow::onSelectFolder()
     Logger::getInstance().log("Starting batch check on folder: " + dirPath.toStdString());
 
     batchResultsTable->setRowCount(0);
-    QDirIterator it(dirPath, {"*.obj"}, QDir::Files, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        QString filePath = it.next();
-        Logger::getInstance().log("Checking file: " + filePath.toStdString());
-        QCoreApplication::processEvents(); 
 
+    QDirIterator it(dirPath, {"*.obj"}, QDir::Files, QDirIterator::Subdirectories);
+    QStringList files;
+    while(it.hasNext()){
+        files.append(it.next());
+    }
+
+    progressDialog = new QProgressDialog("Checking files in folder...", "Cancel", 0, files.count(), this);
+    progressDialog->setWindowModality(Qt::WindowModal);
+    
+    connect(progressDialog, &QProgressDialog::canceled, &batchCheckWatcher, &QFutureWatcher<BatchCheckResult>::cancel);
+
+    auto processFile = [this](const QString& filePath) -> BatchCheckResult {
+        Logger::getInstance().log("Checking file: " + filePath.toStdString());
+        
         Mesh mesh;
-        if (ObjLoader::load(filePath.toStdString(), mesh)) {
+        if (ObjLoader::load_indexed(filePath.toStdString(), mesh)) {
             std::set<MeshChecker::CheckType> checksToPerform;
             if (batchCheckWatertightCheck->isChecked()) checksToPerform.insert(MeshChecker::CheckType::Watertight);
             if (batchCheckNonManifoldCheck->isChecked()) checksToPerform.insert(MeshChecker::CheckType::NonManifold);
@@ -373,27 +384,46 @@ void MainWindow::onSelectFolder()
             if (batchCheckUVBoundsCheck->isChecked()) checksToPerform.insert(MeshChecker::CheckType::UVBounds);
 
             MeshChecker::CheckResult result = MeshChecker::check(mesh, checksToPerform);
-            int row = batchResultsTable->rowCount();
-            batchResultsTable->insertRow(row);
-            batchResultsTable->setItem(row, 0, new QTableWidgetItem(QFileInfo(filePath).fileName()));
-            batchResultsTable->setItem(row, 1, new QTableWidgetItem(result.is_watertight ? "Yes" : "No"));
-            batchResultsTable->setItem(row, 2, new QTableWidgetItem(QString::number(result.non_manifold_vertices_count)));
-            batchResultsTable->setItem(row, 3, new QTableWidgetItem(QString::number(result.self_intersections_count)));
-            batchResultsTable->setItem(row, 4, new QTableWidgetItem(QString::number(result.holes_count)));
-            batchResultsTable->setItem(row, 5, new QTableWidgetItem(QString::number(result.degenerate_faces_count)));
-            batchResultsTable->setItem(row, 6, new QTableWidgetItem(result.has_uvs ? "Yes" : "No"));
-            batchResultsTable->setItem(row, 7, new QTableWidgetItem(QString::number(result.overlapping_uv_islands_count)));
-            batchResultsTable->setItem(row, 8, new QTableWidgetItem(QString::number(result.uvs_out_of_bounds_count)));
+            return {filePath, result};
         } else {
             Logger::getInstance().log("Failed to load file: " + filePath.toStdString());
+            return {filePath, MeshChecker::CheckResult()};
         }
-    }
+    };
+
+    batchCheckWatcher.setFuture(QtConcurrent::mapped(files, processFile));
+    progressDialog->show();
+}
+
+void MainWindow::onBatchResultReady(int index)
+{
+    BatchCheckResult result = batchCheckWatcher.resultAt(index);
+    
+    int row = batchResultsTable->rowCount();
+    batchResultsTable->insertRow(row);
+    batchResultsTable->setItem(row, 0, new QTableWidgetItem(QFileInfo(result.filePath).fileName()));
+    batchResultsTable->setItem(row, 1, new QTableWidgetItem(result.checkResult.is_watertight ? "Yes" : "No"));
+    batchResultsTable->setItem(row, 2, new QTableWidgetItem(QString::number(result.checkResult.non_manifold_vertices_count)));
+    batchResultsTable->setItem(row, 3, new QTableWidgetItem(QString::number(result.checkResult.self_intersections_count)));
+    batchResultsTable->setItem(row, 4, new QTableWidgetItem(QString::number(result.checkResult.holes_count)));
+    batchResultsTable->setItem(row, 5, new QTableWidgetItem(QString::number(result.checkResult.degenerate_faces_count)));
+    batchResultsTable->setItem(row, 6, new QTableWidgetItem(result.checkResult.has_uvs ? "Yes" : "No"));
+    batchResultsTable->setItem(row, 7, new QTableWidgetItem(QString::number(result.checkResult.overlapping_uv_islands_count)));
+    batchResultsTable->setItem(row, 8, new QTableWidgetItem(QString::number(result.checkResult.uvs_out_of_bounds_count)));
+
+    progressDialog->setValue(index + 1);
+}
+
+void MainWindow::onBatchCheckFinished()
+{
+    progressDialog->setValue(batchResultsTable->rowCount());
     batchResultsTable->resizeColumnsToContents();
     for (int i = 0; i < batchResultsTable->columnCount(); ++i) {
         batchResultsTable->setColumnWidth(i, batchResultsTable->columnWidth(i) + 20);
     }
     Logger::getInstance().log("Batch check finished.");
 }
+
 
 void MainWindow::onExportCsv()
 {
@@ -430,7 +460,7 @@ void MainWindow::onLoadMannequin()
     QString filePath = QFileDialog::getOpenFileName(this, "Load Mannequin", "", "OBJ Files (*.obj)");
     if (!filePath.isEmpty()) {
         Logger::getInstance().log("Loading mannequin: " + filePath.toStdString());
-        if (!ObjLoader::load(filePath.toStdString(), mannequinMesh)) {
+        if (!ObjLoader::load_indexed(filePath.toStdString(), mannequinMesh)) {
             QMessageBox::critical(this, "Error", "Failed to load mannequin mesh.");
             Logger::getInstance().log("Failed to load mannequin.");
         } else {
@@ -452,7 +482,7 @@ void MainWindow::onLoadApparel()
     apparelMeshes.clear();
     for (const QString& filePath : filePaths) {
         Mesh mesh;
-        if (ObjLoader::load(filePath.toStdString(), mesh)) {
+        if (ObjLoader::load_indexed(filePath.toStdString(), mesh)) {
             mesh.colors.assign(mesh.vertices.size(), glm::vec3(0.7f, 0.7f, 0.7f));
             apparelMeshes.push_back(mesh);
             Logger::getInstance().log("Loaded apparel item: " + filePath.toStdString());

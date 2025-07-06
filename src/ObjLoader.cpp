@@ -124,3 +124,90 @@ bool ObjLoader::load(const std::string& path, Mesh& mesh)
 
     return true;
 }
+
+bool ObjLoader::load_indexed(const std::string& path, Mesh& mesh)
+{
+    mesh.vertices.clear();
+    mesh.uvs.clear();
+    mesh.normals.clear();
+    mesh.vertex_indices.clear();
+    mesh.uv_indices.clear();
+    mesh.normal_indices.clear();
+
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open file " << path << std::endl;
+        return false;
+    }
+
+    std::vector<glm::vec3> temp_vertices;
+    std::vector<glm::vec2> temp_uvs;
+    std::vector<glm::vec3> temp_normals;
+
+    std::string line;
+    while (std::getline(file, line)) {
+        std::stringstream ss(line);
+        std::string type;
+        ss >> type;
+
+        if (type == "v") {
+            glm::vec3 vertex;
+            ss >> vertex.x >> vertex.y >> vertex.z;
+            temp_vertices.push_back(vertex);
+        } else if (type == "vt") {
+            glm::vec2 uv;
+            ss >> uv.x >> uv.y;
+            temp_uvs.push_back(uv);
+        } else if (type == "vn") {
+            glm::vec3 normal;
+            ss >> normal.x >> normal.y >> normal.z;
+            temp_normals.push_back(normal);
+        } else if (type == "f") {
+            std::string v1_str, v2_str, v3_str, v4_str;
+            ss >> v1_str >> v2_str >> v3_str >> v4_str;
+
+            FaceVertex fv[4];
+            parse_face_vertex(v1_str, fv[0]);
+            parse_face_vertex(v2_str, fv[1]);
+            parse_face_vertex(v3_str, fv[2]);
+
+            mesh.vertex_indices.push_back(fv[0].v_idx - 1);
+            mesh.vertex_indices.push_back(fv[1].v_idx - 1);
+            mesh.vertex_indices.push_back(fv[2].v_idx - 1);
+
+            if (fv[0].vt_idx > 0) {
+                mesh.uv_indices.push_back(fv[0].vt_idx - 1);
+                mesh.uv_indices.push_back(fv[1].vt_idx - 1);
+                mesh.uv_indices.push_back(fv[2].vt_idx - 1);
+            }
+            if (fv[0].vn_idx > 0) {
+                mesh.normal_indices.push_back(fv[0].vn_idx - 1);
+                mesh.normal_indices.push_back(fv[1].vn_idx - 1);
+                mesh.normal_indices.push_back(fv[2].vn_idx - 1);
+            }
+
+            if (!v4_str.empty()) {
+                parse_face_vertex(v4_str, fv[3]);
+                mesh.vertex_indices.push_back(fv[0].v_idx - 1);
+                mesh.vertex_indices.push_back(fv[2].v_idx - 1);
+                mesh.vertex_indices.push_back(fv[3].v_idx - 1);
+                if (fv[0].vt_idx > 0) {
+                    mesh.uv_indices.push_back(fv[0].vt_idx - 1);
+                    mesh.uv_indices.push_back(fv[2].vt_idx - 1);
+                    mesh.uv_indices.push_back(fv[3].vt_idx - 1);
+                }
+                if (fv[0].vn_idx > 0) {
+                    mesh.normal_indices.push_back(fv[0].vn_idx - 1);
+                    mesh.normal_indices.push_back(fv[2].vn_idx - 1);
+                    mesh.normal_indices.push_back(fv[3].vn_idx - 1);
+                }
+            }
+        }
+    }
+
+    mesh.vertices = temp_vertices;
+    mesh.uvs = temp_uvs;
+    mesh.normals = temp_normals;
+
+    return true;
+}

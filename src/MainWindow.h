@@ -7,6 +7,12 @@
 #include "MeshChecker.h"
 #include "IntersectionResult.h"
 
+struct BatchCheckResult {
+    QString filePath;
+    MeshChecker::CheckResult checkResult;
+};
+
+
 
 class QTabWidget;
 class ViewerWidget;
@@ -41,6 +47,8 @@ private slots:
     void onVisualizationToggled();
     void onCheckDegenerate();
     void onLogMessage(const QString& message);
+    void onBatchResultReady(int index);
+    void onBatchCheckFinished();
 
 private:
     void setupUI();
@@ -105,6 +113,7 @@ private:
     // Async
     QFutureWatcher<MeshChecker::CheckResult> checkWatcher;
     QFutureWatcher<std::vector<IntersectionResult>> intersectionCheckWatcher;
+    QFutureWatcher<BatchCheckResult> batchCheckWatcher;
     QProgressDialog* progressDialog;
 };
 

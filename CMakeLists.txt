@@ -8,12 +8,19 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
+if(MSVC)
+    add_compile_options("/execution_character_set:utf-8")
+    add_compile_options("/wd4251") 
+    add_compile_options("/wd4275") 
+endif()
+
 # --- Find Dependencies ---
-find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets Concurrent)
 find_package(OpenGL REQUIRED)
 find_package(CGAL REQUIRED)
 find_package(glm REQUIRED)
 find_package(GLU REQUIRED)
+find_package(Threads REQUIRED)
 
 # --- Project Sources ---
 if(WIN32)
@@ -71,10 +78,12 @@ target_link_libraries(ApparelMeshChecker
     Qt6::Widgets
     Qt6::OpenGL
     Qt6::OpenGLWidgets
+    Qt6::Concurrent
     ${OPENGL_LIBRARIES}
     ${GLU_LIBRARIES}
     CGAL::CGAL
     glm::glm
+    Threads::Threads
 )
 
 # --- Include Directories ---
@@ -91,6 +100,7 @@ target_link_libraries(ApparelMeshChecker-cli
     Qt6::Core
     CGAL::CGAL
     glm::glm
+    Threads::Threads
 )
 
 # --- CPack Configuration ---
