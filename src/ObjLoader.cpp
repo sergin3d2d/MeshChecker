@@ -1,35 +1,16 @@
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
 #include "ObjLoader.h"
 #include <iostream>
-#include <fstream>
-#include <sstream>
-#include <vector>
-#include <map>
-
-namespace {
-    struct FaceVertex {
-        unsigned int v_idx = 0;
-        unsigned int vt_idx = 0;
-        unsigned int vn_idx = 0;
-    };
-
-    void parse_face_vertex(const std::string& face_data, FaceVertex& fv) {
-        std::stringstream face_ss(face_data);
-        char slash;
-
-        face_ss >> fv.v_idx;
-        if (face_ss.peek() == '/') {
-            face_ss >> slash;
-            if (face_ss.peek() != '/') {
-                face_ss >> fv.vt_idx;
-            }
-            if (face_ss.peek() == '/') {
-                face_ss >> slash >> fv.vn_idx;
-            }
-        }
-    }
-}
+#include <cstring>
 
 bool ObjLoader::load(const std::string& path, Mesh& mesh)
+{
+    // This function is deprecated and now calls the indexed loader.
+    return load_indexed(path, mesh);
+}
+
+bool ObjLoader::load_indexed(const std::string& path, Mesh& mesh)
 {
     mesh.vertices.clear();
     mesh.uvs.clear();
@@ -38,77 +19,54 @@ bool ObjLoader::load(const std::string& path, Mesh& mesh)
     mesh.uv_indices.clear();
     mesh.normal_indices.clear();
 
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        std::cerr << "Error: Could not open file " << path << std::endl;
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string warn, err;
+
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, path.c_str())) {
+        std::cerr << "tinyobjloader: " << warn << err << std::endl;
         return false;
     }
 
-    // Use temporary vectors to store the raw data from the OBJ file
-    std::vector<glm::vec3> temp_vertices;
-    std::vector<glm::vec2> temp_uvs;
-    std::vector<glm::vec3> temp_normals;
-    std::vector<FaceVertex> faces;
+    // Loop over shapes
+    for (const auto& shape : shapes) {
+        // Loop over faces
+        for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); f++) {
+            int fv = shape.mesh.num_face_vertices[f];
 
-    std::string line;
-    while (std::getline(file, line)) {
-        std::stringstream ss(line);
-        std::string type;
-        ss >> type;
+            // Loop over vertices in the face
+            for (size_t v = 0; v < fv; v++) {
+                tinyobj::index_t idx = shape.mesh.indices[f * fv + v];
 
-        if (type == "v") {
-            glm::vec3 vertex;
-            ss >> vertex.x >> vertex.y >> vertex.z;
-            temp_vertices.push_back(vertex);
-        } else if (type == "vt") {
-            glm::vec2 uv;
-            ss >> uv.x >> uv.y;
-            temp_uvs.push_back(uv);
-        } else if (type == "vn") {
-            glm::vec3 normal;
-            ss >> normal.x >> normal.y >> normal.z;
-            temp_normals.push_back(normal);
-        } else if (type == "f") {
-            std::string face_data;
-            while(ss >> face_data) {
-                FaceVertex fv;
-                parse_face_vertex(face_data, fv);
-                faces.push_back(fv);
-            }
-            // Add a marker for the end of the face
-            faces.push_back({0,0,0}); 
-        }
-    }
+                // Vertex
+                mesh.vertices.push_back(glm::vec3(
+                    attrib.vertices[3 * idx.vertex_index + 0],
+                    attrib.vertices[3 * idx.vertex_index + 1],
+                    attrib.vertices[3 * idx.vertex_index + 2]
+                ));
 
-    // --- Post-processing: De-index for faceted normals and VBOs ---
-    for (size_t i = 0; i < faces.size(); ) {
-        std::vector<FaceVertex> face;
-        while(i < faces.size() && faces[i].v_idx != 0) {
-            face.push_back(faces[i]);
-            i++;
-        }
-        i++; // Skip the end-of-face marker
-
-        if(face.size() >= 3) {
-            // Triangulate the polygon
-            for(size_t j = 1; j < face.size() - 1; ++j) {
-                FaceVertex fv[3] = {face[0], face[j], face[j+1]};
-
-                glm::vec3 v[3];
-                for(int k=0; k<3; ++k) {
-                    v[k] = temp_vertices[fv[k].v_idx - 1];
+                // Normal
+                if (idx.normal_index >= 0) {
+                    mesh.normals.push_back(glm::vec3(
+                        attrib.normals[3 * idx.normal_index + 0],
+                        attrib.normals[3 * idx.normal_index + 1],
+                        attrib.normals[3 * idx.normal_index + 2]
+                    ));
+                } else {
+                    // If no normals are present, we'll need to compute them.
+                    // For now, we'll just add a zero vector.
+                    mesh.normals.push_back(glm::vec3(0.0f, 0.0f, 0.0f));
                 }
 
-                glm::vec3 face_normal = glm::normalize(glm::cross(v[1] - v[0], v[2] - v[0]));
-
-                for(int k=0; k<3; ++k) {
-                    mesh.vertices.push_back(v[k]);
-                    mesh.normals.push_back(face_normal);
-                    if(!temp_uvs.empty() && fv[k].vt_idx > 0) {
-                        mesh.uvs.push_back(temp_uvs[fv[k].vt_idx - 1]);
-                    } else {
-                        mesh.uvs.push_back(glm::vec2(0,0)); // Default UV
-                    }
+                // UV
+                if (idx.texcoord_index >= 0) {
+                    mesh.uvs.push_back(glm::vec2(
+                        attrib.texcoords[2 * idx.texcoord_index + 0],
+                        attrib.texcoords[2 * idx.texcoord_index + 1]
+                    ));
+                } else {
+                    mesh.uvs.push_back(glm::vec2(0.0f, 0.0f));
                 }
             }
         }
@@ -122,92 +80,17 @@ bool ObjLoader::load(const std::string& path, Mesh& mesh)
     mesh.normal_indices = mesh.vertex_indices;
     mesh.uv_indices = mesh.vertex_indices;
 
-    return true;
-}
-
-bool ObjLoader::load_indexed(const std::string& path, Mesh& mesh)
-{
-    mesh.vertices.clear();
-    mesh.uvs.clear();
-    mesh.normals.clear();
-    mesh.vertex_indices.clear();
-    mesh.uv_indices.clear();
-    mesh.normal_indices.clear();
-
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        std::cerr << "Error: Could not open file " << path << std::endl;
-        return false;
-    }
-
-    std::vector<glm::vec3> temp_vertices;
-    std::vector<glm::vec2> temp_uvs;
-    std::vector<glm::vec3> temp_normals;
-
-    std::string line;
-    while (std::getline(file, line)) {
-        std::stringstream ss(line);
-        std::string type;
-        ss >> type;
-
-        if (type == "v") {
-            glm::vec3 vertex;
-            ss >> vertex.x >> vertex.y >> vertex.z;
-            temp_vertices.push_back(vertex);
-        } else if (type == "vt") {
-            glm::vec2 uv;
-            ss >> uv.x >> uv.y;
-            temp_uvs.push_back(uv);
-        } else if (type == "vn") {
-            glm::vec3 normal;
-            ss >> normal.x >> normal.y >> normal.z;
-            temp_normals.push_back(normal);
-        } else if (type == "f") {
-            std::string v1_str, v2_str, v3_str, v4_str;
-            ss >> v1_str >> v2_str >> v3_str >> v4_str;
-
-            FaceVertex fv[4];
-            parse_face_vertex(v1_str, fv[0]);
-            parse_face_vertex(v2_str, fv[1]);
-            parse_face_vertex(v3_str, fv[2]);
-
-            mesh.vertex_indices.push_back(fv[0].v_idx - 1);
-            mesh.vertex_indices.push_back(fv[1].v_idx - 1);
-            mesh.vertex_indices.push_back(fv[2].v_idx - 1);
-
-            if (fv[0].vt_idx > 0) {
-                mesh.uv_indices.push_back(fv[0].vt_idx - 1);
-                mesh.uv_indices.push_back(fv[1].vt_idx - 1);
-                mesh.uv_indices.push_back(fv[2].vt_idx - 1);
-            }
-            if (fv[0].vn_idx > 0) {
-                mesh.normal_indices.push_back(fv[0].vn_idx - 1);
-                mesh.normal_indices.push_back(fv[1].vn_idx - 1);
-                mesh.normal_indices.push_back(fv[2].vn_idx - 1);
-            }
-
-            if (!v4_str.empty()) {
-                parse_face_vertex(v4_str, fv[3]);
-                mesh.vertex_indices.push_back(fv[0].v_idx - 1);
-                mesh.vertex_indices.push_back(fv[2].v_idx - 1);
-                mesh.vertex_indices.push_back(fv[3].v_idx - 1);
-                if (fv[0].vt_idx > 0) {
-                    mesh.uv_indices.push_back(fv[0].vt_idx - 1);
-                    mesh.uv_indices.push_back(fv[2].vt_idx - 1);
-                    mesh.uv_indices.push_back(fv[3].vt_idx - 1);
-                }
-                if (fv[0].vn_idx > 0) {
-                    mesh.normal_indices.push_back(fv[0].vn_idx - 1);
-                    mesh.normal_indices.push_back(fv[2].vn_idx - 1);
-                    mesh.normal_indices.push_back(fv[3].vn_idx - 1);
-                }
-            }
+    // If no normals were loaded, compute flat normals
+    if (attrib.normals.empty()) {
+        for (size_t i = 0; i < mesh.vertices.size(); i += 3) {
+            glm::vec3 v1 = mesh.vertices[i + 1] - mesh.vertices[i];
+            glm::vec3 v2 = mesh.vertices[i + 2] - mesh.vertices[i];
+            glm::vec3 normal = glm::normalize(glm::cross(v1, v2));
+            mesh.normals[i] = normal;
+            mesh.normals[i + 1] = normal;
+            mesh.normals[i + 2] = normal;
         }
     }
-
-    mesh.vertices = temp_vertices;
-    mesh.uvs = temp_uvs;
-    mesh.normals = temp_normals;
 
     return true;
 }

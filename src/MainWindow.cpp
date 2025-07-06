@@ -338,10 +338,13 @@ void MainWindow::onCheckMesh()
 
     progressDialog = new QProgressDialog("Checking mesh...", "Cancel", 0, 0, this);
     progressDialog->setWindowModality(Qt::WindowModal);
-    progressDialog->show();
-
+    
     QFuture<MeshChecker::CheckResult> future = QtConcurrent::run(&MeshChecker::check, currentMesh, checksToPerform);
     checkWatcher.setFuture(future);
+    
+    connect(&checkWatcher, &QFutureWatcher<MeshChecker::CheckResult>::finished, progressDialog, &QProgressDialog::reset);
+    
+    progressDialog->exec();
 }
 
 void MainWindow::onCheckFinished()
@@ -381,14 +384,6 @@ void MainWindow::onSelectFolder()
         files.append(it.next());
     }
 
-    progressDialog = new QProgressDialog("Checking files in folder...", "Cancel", 0, files.count(), this);
-    progressDialog->setAttribute(Qt::WA_DeleteOnClose);
-    progressDialog->setWindowModality(Qt::WindowModal);
-    
-    connect(&batchCheckWatcher, &QFutureWatcher<BatchCheckResult>::progressValueChanged, progressDialog, &QProgressDialog::setValue);
-    connect(&batchCheckWatcher, &QFutureWatcher<BatchCheckResult>::finished, progressDialog, &QProgressDialog::reset);
-    connect(progressDialog, &QProgressDialog::canceled, &batchCheckWatcher, &QFutureWatcher<BatchCheckResult>::cancel);
-
     auto processFile = [this](const QString& filePath) -> BatchCheckResult {
         Logger::getInstance().log("Checking file: " + filePath.toStdString());
         
@@ -414,8 +409,18 @@ void MainWindow::onSelectFolder()
     int numThreads = batchAutoThreadsCheck->isChecked() ? QThread::idealThreadCount() : batchThreadsSpinBox->value();
     QThreadPool::globalInstance()->setMaxThreadCount(numThreads);
 
-    batchCheckWatcher.setFuture(QtConcurrent::mapped(files, processFile));
-    progressDialog->show();
+    QFuture<BatchCheckResult> future = QtConcurrent::mapped(files, processFile);
+    batchCheckWatcher.setFuture(future);
+
+    progressDialog = new QProgressDialog("Checking files in folder...", "Cancel", 0, files.count(), this);
+    progressDialog->setAttribute(Qt::WA_DeleteOnClose);
+    progressDialog->setWindowModality(Qt::WindowModal);
+    
+    connect(&batchCheckWatcher, &QFutureWatcher<BatchCheckResult>::progressValueChanged, progressDialog, &QProgressDialog::setValue);
+    connect(&batchCheckWatcher, &QFutureWatcher<BatchCheckResult>::finished, progressDialog, &QProgressDialog::reset);
+    connect(progressDialog, &QProgressDialog::canceled, &batchCheckWatcher, &QFutureWatcher<BatchCheckResult>::cancel);
+    
+    progressDialog->exec();
 }
 
 void MainWindow::onBatchResultReady(int index)
@@ -527,10 +532,6 @@ void MainWindow::onCheckIntersection()
 
     Logger::getInstance().log("Starting intersection check...");
 
-    progressDialog = new QProgressDialog("Checking intersections...", "Cancel", 0, 0, this);
-    progressDialog->setWindowModality(Qt::WindowModal);
-    progressDialog->show();
-
     auto checkFunc = [this]() {
         std::vector<IntersectionResult> results;
         for (size_t i = 0; i < apparelMeshes.size(); ++i) {
@@ -543,6 +544,13 @@ void MainWindow::onCheckIntersection()
 
     QFuture<std::vector<IntersectionResult>> future = QtConcurrent::run(checkFunc);
     intersectionCheckWatcher.setFuture(future);
+
+    progressDialog = new QProgressDialog("Checking intersections...", "Cancel", 0, 0, this);
+    progressDialog->setWindowModality(Qt::WindowModal);
+    
+    connect(&intersectionCheckWatcher, &QFutureWatcher<std::vector<IntersectionResult>>::finished, progressDialog, &QProgressDialog::reset);
+    
+    progressDialog->exec();
 }
 
 void MainWindow::onCheckIntersectionFinished()
