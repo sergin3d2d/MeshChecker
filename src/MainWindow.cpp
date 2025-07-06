@@ -382,8 +382,11 @@ void MainWindow::onSelectFolder()
     }
 
     progressDialog = new QProgressDialog("Checking files in folder...", "Cancel", 0, files.count(), this);
+    progressDialog->setAttribute(Qt::WA_DeleteOnClose);
     progressDialog->setWindowModality(Qt::WindowModal);
     
+    connect(&batchCheckWatcher, &QFutureWatcher<BatchCheckResult>::progressValueChanged, progressDialog, &QProgressDialog::setValue);
+    connect(&batchCheckWatcher, &QFutureWatcher<BatchCheckResult>::finished, progressDialog, &QProgressDialog::reset);
     connect(progressDialog, &QProgressDialog::canceled, &batchCheckWatcher, &QFutureWatcher<BatchCheckResult>::cancel);
 
     auto processFile = [this](const QString& filePath) -> BatchCheckResult {
@@ -430,13 +433,10 @@ void MainWindow::onBatchResultReady(int index)
     batchResultsTable->setItem(row, 6, new QTableWidgetItem(result.checkResult.has_uvs ? "Yes" : "No"));
     batchResultsTable->setItem(row, 7, new QTableWidgetItem(QString::number(result.checkResult.overlapping_uv_islands_count)));
     batchResultsTable->setItem(row, 8, new QTableWidgetItem(QString::number(result.checkResult.uvs_out_of_bounds_count)));
-
-    progressDialog->setValue(index + 1);
 }
 
 void MainWindow::onBatchCheckFinished()
 {
-    progressDialog->setValue(batchResultsTable->rowCount());
     batchResultsTable->resizeColumnsToContents();
     for (int i = 0; i < batchResultsTable->columnCount(); ++i) {
         batchResultsTable->setColumnWidth(i, batchResultsTable->columnWidth(i) + 20);
