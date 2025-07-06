@@ -14,6 +14,11 @@ struct BatchCheckResult {
 
 
 
+struct BatchIntersectionResult {
+    QString filePath;
+    int intersectingFaces;
+};
+
 class QTabWidget;
 class ViewerWidget;
 class QLabel;
@@ -50,6 +55,11 @@ private slots:
     void onLogMessage(const QString& message);
     void onBatchResultReady(int index);
     void onBatchCheckFinished();
+    void onLoadMannequinForBatchIntersection();
+    void onSelectApparelFolder();
+    void onBatchIntersectionResultReady(int index);
+    void onBatchIntersectionFinished();
+    void onExportBatchIntersectionCsv();
 
 private:
     void setupUI();
@@ -113,10 +123,15 @@ private:
     QLabel* fileNameLabel;
     QLabel* cameraStatusLabel;
 
+    // Batch Intersection Check
+    QTableWidget* batchIntersectionResultsTable;
+    Mesh batchIntersectionMannequin;
+
     // Async
     QFutureWatcher<MeshChecker::CheckResult> checkWatcher;
     QFutureWatcher<std::vector<IntersectionResult>> intersectionCheckWatcher;
     QFutureWatcher<BatchCheckResult> batchCheckWatcher;
+    QFutureWatcher<BatchIntersectionResult> batchIntersectionWatcher;
     QProgressDialog* progressDialog;
 };
 

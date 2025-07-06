@@ -32,6 +32,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&intersectionCheckWatcher, &QFutureWatcher<std::vector<IntersectionResult>>::finished, this, &MainWindow::onCheckIntersectionFinished);
     connect(&batchCheckWatcher, &QFutureWatcher<BatchCheckResult>::resultReadyAt, this, &MainWindow::onBatchResultReady);
     connect(&batchCheckWatcher, &QFutureWatcher<BatchCheckResult>::finished, this, &MainWindow::onBatchCheckFinished);
+    connect(&batchIntersectionWatcher, &QFutureWatcher<BatchIntersectionResult>::resultReadyAt, this, &MainWindow::onBatchIntersectionResultReady);
+    connect(&batchIntersectionWatcher, &QFutureWatcher<BatchIntersectionResult>::finished, this, &MainWindow::onBatchIntersectionFinished);
     connect(&Logger::getInstance(), &Logger::messageLogged, this, &MainWindow::onLogMessage);
     Logger::getInstance().init("mesh_checker.log");
 }
@@ -258,7 +260,29 @@ void MainWindow::setupUI()
     intersectionResultsList = new QListWidget;
     intersectionCheckLayout->addWidget(intersectionResultsList);
 
+    // Batch Intersection Check Tab
+    QWidget *batchIntersectionCheckTab = new QWidget;
+    QVBoxLayout *batchIntersectionCheckLayout = new QVBoxLayout(batchIntersectionCheckTab);
+    QPushButton *loadMannequinForBatchButton = new QPushButton("Load Mannequin");
+    batchIntersectionCheckLayout->addWidget(loadMannequinForBatchButton);
+    QPushButton *selectApparelFolderButton = new QPushButton("Select Apparel Folder");
+    batchIntersectionCheckLayout->addWidget(selectApparelFolderButton);
+    batchIntersectionResultsTable = new QTableWidget;
+    batchIntersectionResultsTable->setColumnCount(2);
+    batchIntersectionResultsTable->setHorizontalHeaderLabels({"File", "Intersecting Faces"});
+    batchIntersectionResultsTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    batchIntersectionCheckLayout->addWidget(batchIntersectionResultsTable);
+    QPushButton *exportBatchIntersectionCsvButton = new QPushButton("Export to CSV");
+    batchIntersectionCheckLayout->addWidget(exportBatchIntersectionCsvButton);
+    
+    tabWidget->addTab(singleCheckTab, "Single Check");
+    tabWidget->addTab(batchCheckTab, "Batch Check");
     tabWidget->addTab(intersectionCheckTab, "Intersection Check");
+    tabWidget->addTab(batchIntersectionCheckTab, "Batch Intersection Check");
+
+    connect(loadMannequinForBatchButton, &QPushButton::clicked, this, &MainWindow::onLoadMannequinForBatchIntersection);
+    connect(selectApparelFolderButton, &QPushButton::clicked, this, &MainWindow::onSelectApparelFolder);
+    connect(exportBatchIntersectionCsvButton, &QPushButton::clicked, this, &MainWindow::onExportBatchIntersectionCsv);
 
     connect(loadMannequinButton, &QPushButton::clicked, this, &MainWindow::onLoadMannequin);
     connect(loadApparelButton, &QPushButton::clicked, this, &MainWindow::onLoadApparel);
@@ -447,6 +471,122 @@ void MainWindow::onBatchCheckFinished()
         batchResultsTable->setColumnWidth(i, batchResultsTable->columnWidth(i) + 20);
     }
     Logger::getInstance().log("Batch check finished.");
+}
+
+void MainWindow::onLoadMannequinForBatchIntersection()
+{
+    QString filePath = QFileDialog::getOpenFileName(this, "Load Mannequin", "", "OBJ Files (*.obj)");
+    if (!filePath.isEmpty()) {
+        Logger::getInstance().log("Loading mannequin for batch intersection: " + filePath.toStdString());
+        if (!ObjLoader::load_indexed(filePath.toStdString(), batchIntersectionMannequin)) {
+            QMessageBox::critical(this, "Error", "Failed to load mannequin mesh.");
+            Logger::getInstance().log("Failed to load mannequin for batch intersection.");
+        } else {
+            Logger::getInstance().log("Mannequin for batch intersection loaded successfully.");
+        }
+    }
+}
+
+void MainWindow::onSelectApparelFolder()
+{
+    if (batchIntersectionMannequin.vertices.empty()) {
+        QMessageBox::warning(this, "Warning", "Please load a mannequin first.");
+        return;
+    }
+
+    QString dirPath = QFileDialog::getExistingDirectory(this, "Select Apparel Folder");
+    if (dirPath.isEmpty()) {
+        return;
+    }
+
+    Logger::getInstance().log("Starting batch intersection check on folder: " + dirPath.toStdString());
+
+    batchIntersectionResultsTable->setRowCount(0);
+
+    QDirIterator it(dirPath, {"*.obj"}, QDir::Files, QDirIterator::Subdirectories);
+    QStringList files;
+    while(it.hasNext()){
+        files.append(it.next());
+    }
+
+    auto processFile = [this](const QString& filePath) -> BatchIntersectionResult {
+        Logger::getInstance().log("Checking file for intersection: " + filePath.toStdString());
+        
+        Mesh apparelMesh;
+        if (ObjLoader::load_indexed(filePath.toStdString(), apparelMesh)) {
+            std::vector<int> intersecting_faces;
+            MeshChecker::intersects(batchIntersectionMannequin, apparelMesh, intersecting_faces);
+            return {filePath, (int)intersecting_faces.size()};
+        } else {
+            Logger::getInstance().log("Failed to load file for intersection: " + filePath.toStdString());
+            return {filePath, -1};
+        }
+    };
+
+    int numThreads = batchAutoThreadsCheck->isChecked() ? QThread::idealThreadCount() : batchThreadsSpinBox->value();
+    QThreadPool::globalInstance()->setMaxThreadCount(numThreads);
+
+    QFuture<BatchIntersectionResult> future = QtConcurrent::mapped(files, processFile);
+    batchIntersectionWatcher.setFuture(future);
+
+    progressDialog = new QProgressDialog("Checking intersections in folder...", "Cancel", 0, files.count(), this);
+    progressDialog->setAttribute(Qt::WA_DeleteOnClose);
+    progressDialog->setWindowModality(Qt::WindowModal);
+    
+    connect(&batchIntersectionWatcher, &QFutureWatcher<BatchIntersectionResult>::progressValueChanged, progressDialog, &QProgressDialog::setValue);
+    connect(&batchIntersectionWatcher, &QFutureWatcher<BatchIntersectionResult>::finished, progressDialog, &QProgressDialog::reset);
+    connect(progressDialog, &QProgressDialog::canceled, &batchIntersectionWatcher, &QFutureWatcher<BatchIntersectionResult>::cancel);
+    
+    progressDialog->exec();
+}
+
+void MainWindow::onBatchIntersectionResultReady(int index)
+{
+    BatchIntersectionResult result = batchIntersectionWatcher.resultAt(index);
+    
+    int row = batchIntersectionResultsTable->rowCount();
+    batchIntersectionResultsTable->insertRow(row);
+    batchIntersectionResultsTable->setItem(row, 0, new QTableWidgetItem(QFileInfo(result.filePath).fileName()));
+    batchIntersectionResultsTable->setItem(row, 1, new QTableWidgetItem(QString::number(result.intersectingFaces)));
+}
+
+void MainWindow::onBatchIntersectionFinished()
+{
+    batchIntersectionResultsTable->resizeColumnsToContents();
+    for (int i = 0; i < batchIntersectionResultsTable->columnCount(); ++i) {
+        batchIntersectionResultsTable->setColumnWidth(i, batchIntersectionResultsTable->columnWidth(i) + 20);
+    }
+    Logger::getInstance().log("Batch intersection check finished.");
+}
+
+void MainWindow::onExportBatchIntersectionCsv()
+{
+    QString filePath = QFileDialog::getSaveFileName(this, "Save CSV", "", "CSV Files (*.csv)");
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    QFile file(filePath);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream stream(&file);
+        // Header
+        for (int i = 0; i < batchIntersectionResultsTable->columnCount(); ++i) {
+            stream << batchIntersectionResultsTable->horizontalHeaderItem(i)->text() << (i == batchIntersectionResultsTable->columnCount() - 1 ? "" : ",");
+        }
+        stream << "\n";
+
+        // Data
+        for (int i = 0; i < batchIntersectionResultsTable->rowCount(); ++i) {
+            for (int j = 0; j < batchIntersectionResultsTable->columnCount(); ++j) {
+                stream << batchIntersectionResultsTable->item(i, j)->text() << (j == batchIntersectionResultsTable->columnCount() - 1 ? "" : ",");
+            }
+            stream << "\n";
+        }
+        file.close();
+        Logger::getInstance().log("Batch intersection results exported to: " + filePath.toStdString());
+    } else {
+        Logger::getInstance().log("Failed to export batch intersection results to: " + filePath.toStdString());
+    }
 }
 
 
