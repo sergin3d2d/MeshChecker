@@ -23,41 +23,22 @@ find_package(GLU REQUIRED)
 find_package(Threads REQUIRED)
 
 # --- Project Sources ---
-if(WIN32)
-    add_executable(ApparelMeshChecker WIN32
-        src/main.cpp
-        src/MainWindow.h
-        src/MainWindow.cpp
-        src/ViewerWidget.h
-        src/ViewerWidget.cpp
-        src/Mesh.h
-        src/ObjLoader.h
-        src/ObjLoader.cpp
-        src/MeshChecker.h
-        src/MeshChecker.cpp
-        src/UvChecker.h
-        src/UvChecker.cpp
-        src/Logger.h
-        src/Logger.cpp
-    )
-else()
-    add_executable(ApparelMeshChecker
-        src/main.cpp
-        src/MainWindow.h
-        src/MainWindow.cpp
-        src/ViewerWidget.h
-        src/ViewerWidget.cpp
-        src/Mesh.h
-        src/ObjLoader.h
-        src/ObjLoader.cpp
-        src/MeshChecker.h
-        src/MeshChecker.cpp
-        src/UvChecker.h
-        src/UvChecker.cpp
-        src/Logger.h
-        src/Logger.cpp
-    )
-endif()
+add_executable(ApparelMeshChecker WIN32
+    src/main.cpp
+    src/MainWindow.h
+    src/MainWindow.cpp
+    src/ViewerWidget.h
+    src/ViewerWidget.cpp
+    src/Mesh.h
+    src/ObjLoader.h
+    src/ObjLoader.cpp
+    src/MeshChecker.h
+    src/MeshChecker.cpp
+    src/UvChecker.h
+    src/UvChecker.cpp
+    src/Logger.h
+    src/Logger.cpp
+)
 
 add_executable(ApparelMeshChecker-cli
     src/main_cli.cpp

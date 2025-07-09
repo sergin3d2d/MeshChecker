@@ -23,6 +23,7 @@
 #include <QSplitter>
 #include <QTextEdit>
 #include <QSpinBox>
+#include <QSlider>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -152,11 +153,21 @@ void MainWindow::setupUI()
     showOverlappingUvsCheck->setChecked(false);
     singleCheckLayout->addWidget(showOverlappingUvsCheck);
 
+    highlightRadiusLabel = new QLabel("Highlight Radius: 0.01");
+    singleCheckLayout->addWidget(highlightRadiusLabel);
+    highlightRadiusSlider = new QSlider(Qt::Horizontal);
+    highlightRadiusSlider->setRange(1, 100);
+    highlightRadiusSlider->setValue(10);
+    singleCheckLayout->addWidget(highlightRadiusSlider);
+    highlightRadiusLabel->hide();
+    highlightRadiusSlider->hide();
+
     connect(showIntersectionsCheck, &QCheckBox::toggled, this, &MainWindow::onVisualizationToggled);
     connect(showNonManifoldCheck, &QCheckBox::toggled, this, &MainWindow::onVisualizationToggled);
     connect(showHolesCheck, &QCheckBox::toggled, this, &MainWindow::onVisualizationToggled);
     connect(showHolesCheck, &QCheckBox::toggled, this, &MainWindow::onVisualizationToggled);
     connect(showOverlappingUvsCheck, &QCheckBox::toggled, this, &MainWindow::onVisualizationToggled);
+    connect(highlightRadiusSlider, &QSlider::valueChanged, this, &MainWindow::onHighlightRadiusChanged);
 
     singleCheckLayout->addStretch();
     tabWidget->addTab(singleCheckTab, "Single Check");
@@ -268,8 +279,8 @@ void MainWindow::setupUI()
     QPushButton *selectApparelFolderButton = new QPushButton("Select Apparel Folder");
     batchIntersectionCheckLayout->addWidget(selectApparelFolderButton);
     batchIntersectionResultsTable = new QTableWidget;
-    batchIntersectionResultsTable->setColumnCount(2);
-    batchIntersectionResultsTable->setHorizontalHeaderLabels({"File", "Intersecting Faces"});
+    batchIntersectionResultsTable->setColumnCount(3);
+    batchIntersectionResultsTable->setHorizontalHeaderLabels({"File", "Intersecting Faces", "On Mannequin"});
     batchIntersectionResultsTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     batchIntersectionCheckLayout->addWidget(batchIntersectionResultsTable);
     QPushButton *exportBatchIntersectionCsvButton = new QPushButton("Export to CSV");
@@ -386,6 +397,10 @@ void MainWindow::onCheckFinished()
     hasUvsResultLabel->setText(QString("Has UVs: %1").arg(lastCheckResult.has_uvs ? "Yes" : "No"));
     overlappingUvsResultLabel->setText(QString("Overlapping UVs: %1").arg(lastCheckResult.overlapping_uv_islands_count));
     uvsOutOfBoundsResultLabel->setText(QString("UVs out of bounds: %1").arg(lastCheckResult.uvs_out_of_bounds_count));
+
+    bool showSlider = lastCheckResult.intersecting_faces.size() < 20000 || lastCheckResult.non_manifold_faces.size() < 20000;
+    highlightRadiusLabel->setVisible(showSlider);
+    highlightRadiusSlider->setVisible(showSlider);
 
     currentMesh.colors.assign(currentMesh.vertices.size(), glm::vec3(0.7f, 0.7f, 0.7f)); // Reset to default color
     onVisualizationToggled();
@@ -516,10 +531,26 @@ void MainWindow::onSelectApparelFolder()
         if (ObjLoader::load_indexed(filePath.toStdString(), apparelMesh)) {
             std::vector<int> intersecting_faces;
             MeshChecker::intersects(batchIntersectionMannequin, apparelMesh, intersecting_faces);
-            return {filePath, (int)intersecting_faces.size()};
+
+            // Bounding box check
+            auto mannequinBox = batchIntersectionMannequin.getBoundingBox();
+            auto apparelBox = apparelMesh.getBoundingBox();
+
+            glm::vec3 mannequinSize = mannequinBox.max - mannequinBox.min;
+            mannequinBox.max += mannequinSize * 0.25f;
+            mannequinBox.min -= mannequinSize * 0.25f;
+
+            bool onMannequin = apparelBox.min.x >= mannequinBox.min.x &&
+                               apparelBox.max.x <= mannequinBox.max.x &&
+                               apparelBox.min.y >= mannequinBox.min.y &&
+                               apparelBox.max.y <= mannequinBox.max.y &&
+                               apparelBox.min.z >= mannequinBox.min.z &&
+                               apparelBox.max.z <= mannequinBox.max.z;
+
+            return {filePath, (int)intersecting_faces.size(), onMannequin};
         } else {
             Logger::getInstance().log("Failed to load file for intersection: " + filePath.toStdString());
-            return {filePath, -1};
+            return {filePath, -1, false};
         }
     };
 
@@ -548,6 +579,7 @@ void MainWindow::onBatchIntersectionResultReady(int index)
     batchIntersectionResultsTable->insertRow(row);
     batchIntersectionResultsTable->setItem(row, 0, new QTableWidgetItem(QFileInfo(result.filePath).fileName()));
     batchIntersectionResultsTable->setItem(row, 1, new QTableWidgetItem(QString::number(result.intersectingFaces)));
+    batchIntersectionResultsTable->setItem(row, 2, new QTableWidgetItem(result.onMannequin ? "Yes" : "No"));
 }
 
 void MainWindow::onBatchIntersectionFinished()
@@ -720,6 +752,13 @@ void MainWindow::onIntersectionVisualizationToggled()
     updateIntersectionView();
 }
 
+void MainWindow::onHighlightRadiusChanged(int value)
+{
+    float radius = value / 1000.0f;
+    viewerWidget->setHighlightRadius(radius);
+    highlightRadiusLabel->setText(QString("Highlight Radius: %1").arg(radius));
+}
+
 void MainWindow::updateIntersectionView()
 {
     // Reset colors
@@ -741,7 +780,7 @@ void MainWindow::updateIntersectionView()
     }
 
     if (showIntersectionsCheck_IntersectionTab->isChecked()) {
-        for (size_t i = 0; i < apparelMeshes.size(); ++i) {
+        for (size_t i = 0; i < intersectionResults.size(); ++i) {
             if (i < intersectionResults.size() && intersectionResults[i].intersects) {
                 for (const auto& face_idx : intersectionResults[i].intersecting_faces) {
                     for (int j = 0; j < 3; ++j) {
@@ -765,8 +804,19 @@ void MainWindow::onVisualizationToggled()
     if (currentMesh.vertices.empty()) return;
 
     currentMesh.colors.assign(currentMesh.vertices.size(), glm::vec3(0.7f, 0.7f, 0.7f)); // Default color
+    viewerWidget->highlight_vertices.clear();
+
+    bool useSpheres = (lastCheckResult.intersecting_faces.size() < 20000 && !lastCheckResult.intersecting_faces.empty()) || 
+                      (lastCheckResult.non_manifold_faces.size() < 20000 && !lastCheckResult.non_manifold_faces.empty());
 
     if (showIntersectionsCheck->isChecked()) {
+        if (useSpheres) {
+            for (const auto& face_idx : lastCheckResult.intersecting_faces) {
+                for (int i = 0; i < 3; ++i) {
+                    viewerWidget->highlight_vertices.push_back(currentMesh.vertices[currentMesh.vertex_indices[face_idx * 3 + i]]);
+                }
+            }
+        }
         for (const auto& face_idx : lastCheckResult.intersecting_faces) {
             for (int i = 0; i < 3; ++i) {
                 currentMesh.colors[currentMesh.vertex_indices[face_idx * 3 + i]] = glm::vec3(1.0f, 0.0f, 0.0f);
@@ -775,6 +825,13 @@ void MainWindow::onVisualizationToggled()
     }
 
     if (showNonManifoldCheck->isChecked()) {
+        if (useSpheres) {
+            for (const auto& face_idx : lastCheckResult.non_manifold_faces) {
+                for (int i = 0; i < 3; ++i) {
+                    viewerWidget->highlight_vertices.push_back(currentMesh.vertices[currentMesh.vertex_indices[face_idx * 3 + i]]);
+                }
+            }
+        }
         for (const auto& face_idx : lastCheckResult.non_manifold_faces) {
             for (int i = 0; i < 3; ++i) {
                 currentMesh.colors[currentMesh.vertex_indices[face_idx * 3 + i]] = glm::vec3(1.0f, 1.0f, 0.0f);

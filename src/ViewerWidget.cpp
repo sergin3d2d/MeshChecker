@@ -1,3 +1,6 @@
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include "ViewerWidget.h"
 #include <QOpenGLContext>
 #include <QMouseEvent>
@@ -7,6 +10,7 @@
 #include <set>
 #include <QOpenGLFunctions>
 #include <algorithm>
+#include <GL/glu.h>
 
 ViewerWidget::ViewerWidget(QWidget *parent)
     : QOpenGLWidget(parent)
@@ -31,6 +35,7 @@ void ViewerWidget::clearMeshes()
     meshes.clear();
     checkResult = nullptr;
     intersectionResults = nullptr;
+    highlight_vertices.clear();
     update();
 }
 
@@ -65,7 +70,21 @@ void ViewerWidget::focusOnMesh()
     updateCameraStatus();
 }
 
+void ViewerWidget::setHighlightRadius(float radius)
+{
+    highlight_radius = radius;
+    update();
+}
 
+void ViewerWidget::drawSphere(const glm::vec3& center, float radius)
+{
+    glPushMatrix();
+    glTranslatef(center.x, center.y, center.z);
+    GLUquadric* quad = gluNewQuadric();
+    gluSphere(quad, radius, 16, 16);
+    gluDeleteQuadric(quad);
+    glPopMatrix();
+}
 
 void ViewerWidget::initializeGL()
 {
@@ -235,6 +254,16 @@ void ViewerWidget::paintGL()
         }
         
         glLineWidth(1.0f);
+        glEnable(GL_LIGHTING);
+    }
+
+    // --- Draw highlight spheres ---
+    if (!highlight_vertices.empty()) {
+        glDisable(GL_LIGHTING);
+        glColor3f(1.0f, 0.0f, 0.0f); // Red
+        for (const auto& vertex : highlight_vertices) {
+            drawSphere(vertex, highlight_radius);
+        }
         glEnable(GL_LIGHTING);
     }
 }

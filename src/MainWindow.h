@@ -17,6 +17,7 @@ struct BatchCheckResult {
 struct BatchIntersectionResult {
     QString filePath;
     int intersectingFaces;
+    bool onMannequin;
 };
 
 class QTabWidget;
@@ -29,6 +30,7 @@ class QCheckBox;
 class QGroupBox;
 class QTextEdit;
 class QSpinBox;
+class QSlider;
 
 class MainWindow : public QMainWindow
 {
@@ -60,6 +62,7 @@ private slots:
     void onBatchIntersectionResultReady(int index);
     void onBatchIntersectionFinished();
     void onExportBatchIntersectionCsv();
+    void onHighlightRadiusChanged(int value);
 
 private:
     void setupUI();
@@ -89,6 +92,8 @@ private:
     QCheckBox* showNonManifoldCheck;
     QCheckBox* showHolesCheck;
     QCheckBox* showOverlappingUvsCheck;
+    QSlider* highlightRadiusSlider;
+    QLabel* highlightRadiusLabel;
 
     // Check selection
     QCheckBox* checkWatertightCheck;

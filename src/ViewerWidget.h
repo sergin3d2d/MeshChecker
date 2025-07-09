@@ -21,6 +21,12 @@ public:
     void clearMeshes();
     void focusOnMesh();
 
+    std::vector<glm::vec3> highlight_vertices;
+    float highlight_radius = 0.01f;
+
+public slots:
+    void setHighlightRadius(float radius);
+
 signals:
     void cameraChanged(const QString& status);
 
@@ -35,6 +41,7 @@ protected:
 private:
     void setupBuffers();
     void updateCameraStatus();
+    void drawSphere(const glm::vec3& center, float radius);
 
     std::vector<const Mesh*> meshes;
     const std::vector<IntersectionResult>* intersectionResults = nullptr;
