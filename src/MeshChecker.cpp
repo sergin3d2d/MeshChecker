@@ -236,6 +236,8 @@ MeshChecker::CheckResult MeshChecker::check(const Mesh& mesh, const std::set<Che
             thread.join();
         }
 
+        cgal_mesh.clear();
+
     } catch (const std::exception& e) {
         Logger::getInstance().log("CGAL Exception: " + std::string(e.what()));
     } catch (...) {
@@ -310,6 +312,8 @@ bool MeshChecker::intersects(const Mesh& mesh1, const Mesh& mesh2, std::vector<i
                 intersecting_faces.push_back(i);
             }
         }
+
+        tree1.clear();
 
         Logger::getInstance().log("Found " + std::to_string(intersecting_faces.size()) + " intersecting faces on apparel.");
         return !intersecting_faces.empty();

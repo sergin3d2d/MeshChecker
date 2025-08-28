@@ -216,19 +216,27 @@ void MainWindow::setupUI()
 
     // Thread count
     QGroupBox *threadsGroup = new QGroupBox("Parallelism");
-    QHBoxLayout *threadsLayout = new QHBoxLayout;
+    QVBoxLayout *threadsLayout = new QVBoxLayout;
+    batchDisableParallelCheck = new QCheckBox("Disable Parallel Processing");
+    batchDisableParallelCheck->setChecked(false);
+    threadsLayout->addWidget(batchDisableParallelCheck);
+
+    QHBoxLayout *autoThreadsLayout = new QHBoxLayout;
     batchAutoThreadsCheck = new QCheckBox("Auto");
     batchAutoThreadsCheck->setChecked(true);
-    threadsLayout->addWidget(batchAutoThreadsCheck);
+    autoThreadsLayout->addWidget(batchAutoThreadsCheck);
     batchThreadsSpinBox = new QSpinBox;
     batchThreadsSpinBox->setRange(1, 128);
     batchThreadsSpinBox->setValue(QThread::idealThreadCount());
     batchThreadsSpinBox->setEnabled(false);
-    threadsLayout->addWidget(batchThreadsSpinBox);
+    autoThreadsLayout->addWidget(batchThreadsSpinBox);
+    threadsLayout->addLayout(autoThreadsLayout);
     threadsGroup->setLayout(threadsLayout);
     batchCheckLayout->addWidget(threadsGroup);
 
     connect(batchAutoThreadsCheck, &QCheckBox::toggled, batchThreadsSpinBox, &QSpinBox::setDisabled);
+    connect(batchDisableParallelCheck, &QCheckBox::toggled, batchAutoThreadsCheck, &QCheckBox::setDisabled);
+    connect(batchDisableParallelCheck, &QCheckBox::toggled, batchThreadsSpinBox, &QCheckBox::setDisabled);
 
     QPushButton *exportCsvButton = new QPushButton("Export to CSV");
     batchCheckLayout->addWidget(exportCsvButton);
@@ -438,6 +446,23 @@ void MainWindow::onSelectFolder()
             if (batchCheckUVBoundsCheck->isChecked()) checksToPerform.insert(MeshChecker::CheckType::UVBounds);
 
             MeshChecker::CheckResult result = MeshChecker::check(mesh, checksToPerform);
+            
+            // Explicitly clear mesh data to release memory
+            mesh.vertices.clear();
+            mesh.vertices.shrink_to_fit();
+            mesh.uvs.clear();
+            mesh.uvs.shrink_to_fit();
+            mesh.colors.clear();
+            mesh.colors.shrink_to_fit();
+            mesh.normals.clear();
+            mesh.normals.shrink_to_fit();
+            mesh.vertex_indices.clear();
+            mesh.vertex_indices.shrink_to_fit();
+            mesh.uv_indices.clear();
+            mesh.uv_indices.shrink_to_fit();
+            mesh.normal_indices.clear();
+            mesh.normal_indices.shrink_to_fit();
+
             return {filePath, result};
         } else {
             Logger::getInstance().log("Failed to load file: " + filePath.toStdString());
@@ -445,7 +470,10 @@ void MainWindow::onSelectFolder()
         }
     };
 
-    int numThreads = batchAutoThreadsCheck->isChecked() ? QThread::idealThreadCount() : batchThreadsSpinBox->value();
+    int numThreads = 1;
+    if (!batchDisableParallelCheck->isChecked()) {
+        numThreads = batchAutoThreadsCheck->isChecked() ? QThread::idealThreadCount() : batchThreadsSpinBox->value();
+    }
     QThreadPool::globalInstance()->setMaxThreadCount(numThreads);
 
     QFuture<BatchCheckResult> future = QtConcurrent::mapped(files, processFile);
@@ -547,6 +575,22 @@ void MainWindow::onSelectApparelFolder()
                                apparelBox.min.z >= mannequinBox.min.z &&
                                apparelBox.max.z <= mannequinBox.max.z;
 
+            // Explicitly clear mesh data to release memory
+            apparelMesh.vertices.clear();
+            apparelMesh.vertices.shrink_to_fit();
+            apparelMesh.uvs.clear();
+            apparelMesh.uvs.shrink_to_fit();
+            apparelMesh.colors.clear();
+            apparelMesh.colors.shrink_to_fit();
+            apparelMesh.normals.clear();
+            apparelMesh.normals.shrink_to_fit();
+            apparelMesh.vertex_indices.clear();
+            apparelMesh.vertex_indices.shrink_to_fit();
+            apparelMesh.uv_indices.clear();
+            apparelMesh.uv_indices.shrink_to_fit();
+            apparelMesh.normal_indices.clear();
+            apparelMesh.normal_indices.shrink_to_fit();
+
             return {filePath, (int)intersecting_faces.size(), onMannequin};
         } else {
             Logger::getInstance().log("Failed to load file for intersection: " + filePath.toStdString());
@@ -554,7 +598,10 @@ void MainWindow::onSelectApparelFolder()
         }
     };
 
-    int numThreads = batchAutoThreadsCheck->isChecked() ? QThread::idealThreadCount() : batchThreadsSpinBox->value();
+    int numThreads = 1;
+    if (!batchDisableParallelCheck->isChecked()) {
+        numThreads = batchAutoThreadsCheck->isChecked() ? QThread::idealThreadCount() : batchThreadsSpinBox->value();
+    }
     QThreadPool::globalInstance()->setMaxThreadCount(numThreads);
 
     QFuture<BatchIntersectionResult> future = QtConcurrent::mapped(files, processFile);

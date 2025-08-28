@@ -115,6 +115,7 @@ private:
     QCheckBox* batchCheckUVBoundsCheck;
     QCheckBox* batchAutoThreadsCheck;
     QSpinBox* batchThreadsSpinBox;
+    QCheckBox* batchDisableParallelCheck;
 
     // Intersection Check
     QListWidget* intersectionResultsList;
